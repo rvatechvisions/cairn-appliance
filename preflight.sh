@@ -200,6 +200,29 @@ capability_credential_source() {
   say "NO CREDENTIAL SOURCE. Nothing below can authenticate."
   say "  Either set CAIRN_PASSWORD for a lab run, or enrol this appliance and"
   say "  set CAIRN_PORTAL once the portal side exists."
+
+  # Print the command rather than the variable's name.
+  #
+  # CAIRN_PASSWORD lives in one shell's environment and nowhere else, which is
+  # the design working -- and it means a new terminal, or a reboot, arrives
+  # here with nothing set. Naming the variable and leaving the reader to
+  # reconstruct the three lines that fill it safely is a message that tells
+  # somebody to do something without giving them the way to do it.
+  #
+  # `set +H` is in the block because a password containing ! is expanded by an
+  # interactive bash before read ever sees it, and the error it gives --
+  # "event not found" -- names neither the password nor the shell's history.
+  say ""
+  say "  For a lab run, in this shell:"
+  say ""
+  say "    set +H"
+  say "    read -rsp 'password for ${PRINCIPAL:-the service account}: ' CAIRN_PASSWORD"
+  say "    echo"
+  say "    export CAIRN_PASSWORD"
+  say ""
+  say "  It is read without echo, never appears on a command line, and lives"
+  say "  only in this shell. Do not put it in ${SETTINGS} -- this script"
+  say "  refuses to start if it finds one there."
   UNASKED=$((UNASKED + 1))
   return 1
 }

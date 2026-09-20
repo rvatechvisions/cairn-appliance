@@ -52,12 +52,25 @@ install_packages() {
   # krb5-user for kinit and klist; ldap-utils for ldapsearch; ca-certificates
   # and curl so a later step can fetch anything it needs over TLS.
   #
+  # libsasl2-modules-gssapi-mit IS NOT OPTIONAL AND IS EASY TO MISS. ldapsearch
+  # only *Recommends* the SASL mechanism packages, and --no-install-recommends
+  # below means a recommendation is not installed -- so a host gets ldapsearch
+  # with no GSSAPI mechanism behind it. The failure is
+  #
+  #   ldap_sasl_interactive_bind: Unknown authentication method (-6)
+  #   SASL(-4): no mechanism available: No worthy mechs found
+  #
+  # which names neither SASL GSSAPI nor a package, and reads like the ticket or
+  # the account being wrong when Kerberos has just succeeded a step earlier.
+  # Found on the first live run against RVA's domain, 20 September 2026.
+  #
   # DEBIAN_FRONTEND keeps krb5-user from opening its realm dialogue, which on
   # an unattended run waits for somebody who is not there.
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq || return 1
   apt-get install -y -qq --no-install-recommends \
-    krb5-user ldap-utils ca-certificates curl jq golang-go || return 1
+    krb5-user ldap-utils libsasl2-modules-gssapi-mit \
+    ca-certificates curl jq golang-go || return 1
 }
 
 report_versions() {

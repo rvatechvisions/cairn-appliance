@@ -339,6 +339,29 @@ capability_ldap() {
   fi
 
   say "REFUSED: the bind or the read failed. The text above is the reason."
+
+  # Name our own missing package rather than leaving the reader with a message
+  # that names neither SASL nor a package.
+  #
+  # "No worthy mechs found" means ldapsearch has no GSSAPI SASL mechanism
+  # installed. It is not a fact about the domain, the account or the ticket --
+  # and arriving one step after Kerberos succeeded, it reads as though the
+  # ticket were at fault. bootstrap.sh installs the package now; this is here
+  # for an appliance built before it did, and for the day a distribution moves
+  # it somewhere else.
+  case "$out" in
+    *"No worthy mechs found"*|*"Unknown authentication method"*)
+      say ""
+      say "  THIS IS THIS HOST, NOT THE DOMAIN. ldapsearch has no GSSAPI SASL"
+      say "  mechanism installed, so the bind was never attempted. Kerberos"
+      say "  succeeded in step 1, and that result stands."
+      say ""
+      say "    apt-get install -y libsasl2-modules-gssapi-mit"
+      say ""
+      say "  Then run this again. Nothing on the domain needs changing."
+      ;;
+  esac
+
   REFUSED=$((REFUSED + 1))
   return 1
 }
@@ -470,9 +493,28 @@ capability_dhcp() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
     say "building the DHCP probe..."
+
+    # `go mod tidy` before `go build`, because go.mod deliberately pins
+    # nothing: the require line and the checksums are written from the imports
+    # on first build, which is the only way a version here is read rather than
+    # recalled. Without this, `go build` refuses with "missing go.sum entry"
+    # for every import -- five errors naming packages that are all correct.
+    #
+    # It needs the network once. Its failure is reported on its own, because
+    # "could not reach the module proxy" and "the code does not compile" are
+    # different facts and only the second is about this repository.
+    if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
+      say "REFUSED: could not resolve the probe's dependencies."
+      say "  This needs outbound network access to the Go module proxy, once."
+      say "  It is not a failure of the domain or of this host's credentials."
+      REFUSED=$((REFUSED + 1))
+      return 1
+    fi
+
     if ! (cd "${HERE}/preflight" && go build -o preflight . 2>&1 | sed 's/^/  /'); then
-      say "REFUSED: the probe did not build. Go is installed by bootstrap.sh;"
-      say "  the module's dependencies need network access the first time."
+      say "REFUSED: the probe's dependencies resolved and it did not compile."
+      say "  That is this repository's problem rather than the host's: the probe"
+      say "  has never been built, so the names it calls are unverified."
       REFUSED=$((REFUSED + 1))
       return 1
     fi

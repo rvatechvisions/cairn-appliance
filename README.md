@@ -287,6 +287,11 @@ collector rather than an argument.
 one read-only account, three commands, and what every line of preflight's
 output means — written for somebody who has read none of this.
 
+**Building the Go probe on its own? `BUILD.md`.** `preflight.sh` always
+rebuilds it, so a normal run needs nothing extra — that document is for when
+you want the compiler's output without a domain read after it, and it carries
+the three reads that tie a binary to the commit it came from.
+
 ### The first run is against RVA Tech Visions' own production domain
 
 Not a built lab forest. **RVA becomes the first customer of its own

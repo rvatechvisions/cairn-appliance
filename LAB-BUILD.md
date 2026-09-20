@@ -273,8 +273,9 @@ Preflight makes no outbound call beyond RVA's own domain controllers.
 
 **Cairn becomes involved at the next step, not this one** — when the appliance
 submits. That needs a `collector` connection on RVA Tech Visions and a token,
-which is the mechanism the existing DHCP collector at a live district already uses, plus the credential
-path above. Both are work, and neither blocks the run below.
+which is the mechanism the existing DHCP collector already uses at a live
+district, plus the credential path above. Both are work, and neither blocks the
+run below.
 
 ---
 

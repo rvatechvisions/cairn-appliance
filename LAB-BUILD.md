@@ -66,7 +66,15 @@ call it makes is a bind, a search or an enumeration.
 
 ## 1 — one Linux VM
 
-**Debian 12 (bookworm)**, netinst, on RVA's network. 2 GB memory, 20 GB disk.
+**Debian 13 (trixie) or 12 (bookworm)**, netinst, on RVA's network. 2 GB
+memory, 20 GB disk.
+
+**13 is what the first real run used**, on 20 September 2026, and every package
+`bootstrap.sh` installs was present in `trixie/main` under the same name — the
+GSSAPI SASL module resolved as `libsasl2-modules-gssapi-mit 2.1.28+dfsg1-9`.
+12 is listed beside it because it is what this guide originally said and
+nothing has contradicted it, which is a weaker claim than the one above and is
+written that way deliberately.
 
 At the software selection screen, **untick everything except "standard system
 utilities"** — no desktop, no web server.

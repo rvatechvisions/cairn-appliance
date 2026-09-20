@@ -316,7 +316,22 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 
 	fmt.Printf("bound: MS-DHCPM on %s (DHCPSRV and DHCPSRV2)\n", server)
 
+	// ServerIPAddress is filled in, and it was empty until 20 September 2026.
+	//
+	// The wire log showed the request going out as
+	// {"server_ip_address":"", "preferred_maximum":4294967295} and coming back
+	// return: 5, ERROR_ACCESS_DENIED -- on a server that had just
+	// authenticated this account and that answers the same read for the same
+	// account from Windows. That empty field was the only difference between
+	// this call and a well-formed one that could be seen rather than guessed.
+	//
+	// MS-DHCPM documents the parameter as unused, which is a statement about
+	// the specification rather than about what a given implementation checks.
+	// Sending what Windows sends costs nothing and removes the one observable
+	// discrepancy; if the refusal survives it, the cause is in the security
+	// layer rather than in the request, and that is a different investigation.
 	subnets, err := servers.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
+		ServerIPAddress:  server,
 		PreferredMaximum: 0xFFFFFFFF,
 	})
 	if err != nil {
@@ -356,6 +371,7 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	fmt.Printf("reading leases from %d of %d scope(s), as a sample:\n", read, len(addresses))
 	for _, address := range addresses[:read] {
 		leases, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
+			ServerIPAddress:  server,
 			SubnetAddress:    address,
 			PreferredMaximum: 0xFFFFFFFF,
 		})

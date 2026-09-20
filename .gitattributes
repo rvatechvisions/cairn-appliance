@@ -1,0 +1,17 @@
+# These files run on Linux and are edited on Windows, so the line ending is
+# not a preference.
+#
+# A shell script checked out with CRLF fails at its shebang -- the kernel looks
+# for an interpreter called "bash\r", does not find one, and reports
+#
+#   bad interpreter: No such file or directory
+#
+# which reads as the *script* being missing rather than as a line ending. That
+# is an hour of somebody's evening, at a customer site, over an invisible byte.
+#
+# Forced rather than left to whoever clones it: core.autocrlf is a setting on a
+# machine, and the next machine is one nobody here configured.
+*.sh   text eol=lf
+*.go   text eol=lf
+go.mod text eol=lf
+*.md   text eol=lf

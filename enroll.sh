@@ -31,10 +31,14 @@ set -uo pipefail
 CONFIG_DIR=/etc/cairn-appliance
 KEY="${CONFIG_DIR}/appliance.key"
 
-# ssh-keygen decides this name, not us: it writes the public half to the
-# private half's path with .pub appended. Naming it independently is how the
-# first version came to chmod, chown and cat a file that was never created --
-# and then print the paths of both keys as though both existed.
+# WE name this now, because openssl writes exactly where it is told.
+#
+# ssh-keygen used to decide it -- the public half went to the private half's
+# path with .pub appended -- and naming it independently was how the first
+# version came to chmod, chown and cat a file that was never created, then
+# print the paths of both keys as though both existed. The lesson survives the
+# tool change: the reads below check each file exists rather than trusting the
+# generator to have made it.
 PUB="${KEY}.pub"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -70,8 +74,40 @@ echo "Generating this appliance's key. It does not leave this machine."
 # ed25519: small, fast, and no parameters to get wrong. No passphrase, because
 # this runs unattended -- the protection is the file mode and the fact that the
 # key is useless without the portal also agreeing this appliance is enrolled.
-if ! ssh-keygen -t ed25519 -N '' -C "cairn-appliance@$(hostname)" -f "$KEY" >/dev/null 2>&1; then
-  echo "FAILED: could not generate a key. Is openssh-client installed?"
+#
+# OPENSSL RATHER THAN ssh-keygen, AND THE REASON IS THAT WE WRITE NO
+# FORMAT-PARSING CODE. Jackie's decision, 20 September 2026.
+#
+# An ssh-keygen key cannot be verified by the portal without us owning a
+# parser. Measured, not assumed: Node refuses `createPublicKey` with format
+# openssh, refuses the OpenSSH private key outright with
+# `DECODER routines::unsupported`, and `ssh-keygen -e -m PKCS8` refuses
+# ED25519. So neither end converts, and signing would have to go through
+# `ssh-keygen -Y sign` -- SSHSIG, which has an armoured envelope, a magic
+# string, a namespace, a reserved field and a pre-hash step. Parsing that
+# means owning crypto-adjacent parsing for ever and getting it subtly wrong
+# eventually.
+#
+# openssl gives PKCS8 in and SPKI out, and a raw 64-byte signature that
+# Node's own crypto.verify takes. Neither end is our code.
+#
+# SSHSIG is for a different job -- a human's SSH key signing files and
+# commits, with namespaces existing specifically to prevent cross-protocol
+# reuse. This is machine auth with a purpose-built keypair.
+#
+# AND THE APPARENT ADVANTAGE WAS A DISADVANTAGE: an ssh-format key could
+# double as an SSH login key to this box. The identity key does one job.
+if ! openssl genpkey -algorithm ed25519 -out "$KEY" >/dev/null 2>&1; then
+  echo "FAILED: could not generate a key. Is openssl installed?"
+  exit 1
+fi
+
+# The public half, written where we said. SPKI PEM, which is what the portal
+# reads with no parsing of ours in between.
+if ! openssl pkey -in "$KEY" -pubout -out "$PUB" >/dev/null 2>&1; then
+  echo "FAILED: a private key was generated and its public half was not."
+  echo "  Remove ${KEY} and run this again rather than leaving a key whose"
+  echo "  public half nobody has."
   exit 1
 fi
 
@@ -84,7 +120,7 @@ fi
 # the script whose whole job is to produce one artifact.
 for required in "$KEY" "$PUB"; do
   if [ ! -f "$required" ]; then
-    echo "FAILED: ssh-keygen reported success and ${required} is not there."
+    echo "FAILED: openssl reported success and ${required} is not there."
     echo "  Nothing was enrolled. Do not treat this appliance as having a key."
     exit 1
   fi
@@ -99,6 +135,7 @@ fi
 
 echo
 echo "=== the public half, which is what the portal needs ==="
+echo "(SPKI PEM. The portal reads this with no format conversion.)"
 cat "$PUB"
 echo
 echo "=== what happens now ==="

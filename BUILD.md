@@ -50,6 +50,26 @@ sudo apt-get install -y golang-go
 go version
 ```
 
+**If you install from the upstream tarball instead, PREPEND to PATH — do not
+append.**
+
+```sh
+export PATH=/usr/local/go/bin:$PATH     # correct
+export PATH=$PATH:/usr/local/go/bin     # WRONG: an older go already on PATH wins
+```
+
+**This failed silently on the lab VM and looked like a failed install.** The box
+already had go1.24.4 ahead on PATH, so appending left 1.24.4 winning and
+`go version` reported the **old** toolchain after a successful install — the
+install worked and the check said it had not. Corrected from the run rather than
+rediscovered: an absence of change reads as a failure, and nothing in the output
+named PATH.
+
+**Do not download the tarball into the repository.** It leaves a ~70MB untracked
+file in the working tree, which is how a dirty tree happens by accident on the
+very build you want clean — and `deploy/build.sh` refuses untracked files for
+exactly that reason. Fetch it to `/tmp`.
+
 `go.mod` declares `go 1.22`. **Read what step 1 or step 2 actually printed
 against that**: a toolchain older than the declared version fails the build with
 a message naming both, which is a clear failure rather than a subtle one. If
@@ -60,10 +80,15 @@ cannot be pinned to one*.
 ### 3. Build
 
 ```sh
-cd preflight
+cd preflight        # THE MODULE IS HERE, NOT THE REPOSITORY ROOT
 go mod tidy
 go build -o preflight .
 ```
+
+**Every `go` command runs from `preflight/`.** From the repository root,
+`go build ./...` answers *directory prefix . does not contain main module*,
+which reads like a broken repository rather than a wrong directory. Observed on
+the lab VM.
 
 **`go mod tidy` comes first and it needs the network once.** `go.mod`
 deliberately pins nothing — the require line and the checksums are written from
@@ -94,10 +119,16 @@ from the repository root puts it somewhere nothing looks for it.
 ### 5. Verify the build matches the commit
 
 ```sh
-git rev-parse HEAD
-git status --porcelain
+git --no-pager rev-parse HEAD
+git --no-pager status --porcelain
 sha256sum preflight/preflight
 ```
+
+**`git --no-pager`, and it is not cosmetic.** On the lab VM a `git diff` opened
+`less`, which **swallowed every queued command after it** — the session looked
+hung and then executed fragments of what had been typed into the pager. Anything
+in this document is written to be pasted as a block, so every git command here
+disables the pager. `-c core.pager=cat` does the same job.
 
 **All three, and the middle one is the one that matters.** A clean
 `git status` is what makes the first line meaningful: a hash with a dirty tree
@@ -106,6 +137,44 @@ failure in a smaller medium.
 
 **Record the three together.** The commit says what the source was, the porcelain
 says the source was only that, and the checksum names the bytes that came out.
+
+---
+
+## OPEN: what user does the appliance run as, and why
+
+**Raised 20 September 2026 as an open item, not a change. Do not alter it
+tonight — the RVA run must happen against the box as it stands.**
+
+**The clone lives in `/root`, mode 700, and the build runs as root.** The
+unprivileged `cairn` user on the same VM cannot reach it. **Nobody decided
+that**: it is where the bootstrap happened to put it.
+
+**Why it is a question rather than a tidy-up.** For a device we place inside a
+client's network, *what user does this run as and why* is a security-review
+question we will be asked — and the current answer is **"root, by accident"**,
+which is a bad answer even where the arrangement turns out to be right. It is
+the same shape as a default branch: correct for the case that exists, invisible
+at the point it was chosen, and nobody wrote it down.
+
+**It also sits awkwardly beside a decision already taken.** *A collector must
+not be a member of the trust boundary it reads* was argued on where the
+collector sits; this is the same question one level in — what it can reach on
+its own host. The appliance holds a directory credential in memory during a
+run, so the blast radius of the account it runs as is part of the same
+argument.
+
+### The options, so the decision is one step
+
+| | Arrangement | What it costs |
+| --- | --- | --- |
+| **A** | **Leave it.** Root, `/root`, mode 700 | Nothing to do. The honest defence is that a collector reading a directory needs its credential protected from other local users, and 700 under root does that. The weakness is that it was never argued — and *safe by arrangement* is a class this project already names |
+| **B** | **Run as `cairn`**, clone under its home | Least privilege, and the answer a reviewer expects. Costs: the Kerberos cache in `/dev/shm` and every file mode has to be re-reasoned for a non-root user, and `preflight.sh` currently refuses unless the key is `600 root:root` |
+| **C** | **Root for the run, `cairn` for the service** | Closest to how a Windows collector under a gMSA is described. Most work, and the split has to be real rather than cosmetic |
+
+**No recommendation is offered, deliberately.** The reasoning above is about
+the shape of the question rather than the answer, and the person who has to
+defend it in a review is the one who should pick. What it must not be is
+undecided at the point a client asks.
 
 ---
 
@@ -129,12 +198,34 @@ bytes that a named commit produced on a named host, written down.
 
 ---
 
-## What this document has not done
+## What this document has done, and the four things the first run corrected
 
-**Nobody has run these steps as written.** They are the commands `preflight.sh`
-already executes, plus the reads around them, assembled into an order a person
-can follow — and assembling is not running. *A validator passing is not the same
-as the thing being right*, and neither is a document.
+**~~Nobody has run these steps as written.~~ Somebody has.** Jackie ran a build
+on the lab VM on 20 September 2026, and the four corrections below are folded in
+above — each **observed in that run** rather than reasoned about afterwards.
 
-**The first run is the proof**, and the thing it proves first is whether the
-uncompiled wording changes in `preflight/main.go` compile at all.
+**The thing it set out to prove is proven**: `preflight` on go1.27.1 answered
+**6 found, 0 refused, 0 not asked** — the same six as the go1.24.4 run. The
+uncompiled wording changes compile, and `go vet` was silent and
+`go mod verify` reported all modules verified.
+
+**The caveat is struck rather than deleted**, because a document that quietly
+stops disclaiming looks the same as one that was always right. What is *still*
+not claimed is byte-identical reproducibility across hosts — that needs the
+toolchain version, module versions and build flags all held, and none of that is
+established.
+
+### And it confirmed the rebuild is unconditional
+
+From the run, verbatim:
+
+```text
+--- 5. DHCP over MS-DHCPM ---
+building the DHCP probe...
+  built: 2026-09-20 18:48:24
+```
+
+**It rebuilt on a box that already had a current binary.** That is the property
+`preflight.sh` claims in its own comment — always build, because a run that used
+yesterday's binary reports on code it did not execute — and it is now read
+rather than asserted.

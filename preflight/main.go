@@ -53,9 +53,26 @@ import (
 	"time"
 
 	"github.com/oiweiwei/go-msrpc/dcerpc"
-	"github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v2"
 	"github.com/oiweiwei/go-msrpc/ssp"
 	"github.com/oiweiwei/go-msrpc/ssp/gssapi"
+
+	// MS-DHCPM is TWO RPC interfaces, and the calls this probe makes are split
+	// across them: R_DhcpEnumSubnets is on DHCPSRV, R_DhcpEnumSubnetClientsV5
+	// is on DHCPSRV2. So two imports and two clients over one connection.
+	//
+	// **The version suffix belongs to go-msrpc's layout, not to the
+	// interface.** Both packages live under a `v1` directory -- `dhcpsrv/v1`
+	// and `dhcpsrv2/v1` -- and the `2` in dhcpsrv2 is part of the interface's
+	// name rather than a version of the first one.
+	//
+	// The original import here was `dhcpm/dhcpsrv/v2`, written from memory and
+	// wrong in both halves: it asked for a major version 2 of the DHCPSRV
+	// package, which does not exist, while the interface it meant is a
+	// sibling. Go reported the module as found and the package as absent,
+	// which is exactly what a path nobody has compiled looks like. Read from
+	// the module in the appliance's own cache, 20 September 2026.
+	dhcpsrv "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v1"
+	dhcpsrv2 "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv2/v1"
 
 	// Kerberos, from the ticket cache preflight.sh established. No password is
 	// read, prompted for or stored by this program: the credential is the
@@ -101,21 +118,37 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 	}
 	defer conn.Close(ctx)
 
-	client, err := dhcpsrv.NewDhcpsrvClient(ctx, conn)
+	// Two clients, one connection. Bound separately and reported separately,
+	// because a server can answer one interface and refuse the other -- and
+	// collapsing that into "MS-DHCPM refused" would name the wrong thing.
+	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("binding the DHCP server interface: %w", err)
+		return fmt.Errorf("binding DHCPSRV: %w", err)
 	}
 
-	fmt.Printf("bound: MS-DHCPM on %s\n", server)
+	clients, err := dhcpsrv2.NewDhcpsrv2Client(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("binding DHCPSRV2: %w", err)
+	}
 
-	subnets, err := client.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
+	fmt.Printf("bound: MS-DHCPM on %s (DHCPSRV and DHCPSRV2)\n", server)
+
+	subnets, err := servers.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
 		PreferredMaximum: 0xFFFFFFFF,
 	})
 	if err != nil {
 		return fmt.Errorf("R_DhcpEnumSubnets: %w", err)
 	}
 
-	addresses := subnetAddresses(subnets)
+	// Read inline rather than through a helper, so no response type has to be
+	// named in a signature. The field names below are still unverified against
+	// the module -- the compiler is the authority for those and has not run
+	// yet -- and naming a type as well would be a second guess resting on the
+	// first.
+	var addresses []uint32
+	if subnets != nil && subnets.EnumInfo != nil {
+		addresses = subnets.EnumInfo.Elements
+	}
 	fmt.Printf("R_DhcpEnumSubnets: %d scope(s)\n", len(addresses))
 	for _, address := range addresses {
 		fmt.Printf("  %s\n", formatIPv4(address))
@@ -139,43 +172,26 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 
 	fmt.Printf("reading leases from %d of %d scope(s), as a sample:\n", read, len(addresses))
 	for _, address := range addresses[:read] {
-		count, err := leaseCount(ctx, client, address)
+		leases, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
+			SubnetAddress:    address,
+			PreferredMaximum: 0xFFFFFFFF,
+		})
 		if err != nil {
 			// Per scope, because one scope refusing is a different fact from
 			// the server refusing, and the difference is what somebody acts on.
 			fmt.Printf("  %-18s could not be read: %v\n", formatIPv4(address), err)
 			continue
 		}
+
+		count := 0
+		if leases != nil && leases.ClientInfo != nil {
+			count = len(leases.ClientInfo.Clients)
+		}
 		fmt.Printf("  %-18s %d lease(s)\n", formatIPv4(address), count)
 	}
 
 	fmt.Println("what is correct for this site is not something preflight can know.")
 	return nil
-}
-
-func leaseCount(ctx context.Context, client dhcpsrv.DhcpsrvClient, subnet uint32) (int, error) {
-	response, err := client.EnumSubnetClientsV5(ctx, &dhcpsrv.EnumSubnetClientsV5Request{
-		SubnetAddress:    subnet,
-		PreferredMaximum: 0xFFFFFFFF,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("R_DhcpEnumSubnetClientsV5: %w", err)
-	}
-
-	if response == nil || response.ClientInfo == nil {
-		return 0, nil
-	}
-
-	return len(response.ClientInfo.Clients), nil
-}
-
-// subnetAddresses pulls the scope addresses out of whatever shape the
-// enumeration came back in, and tolerates an empty one.
-func subnetAddresses(response *dhcpsrv.EnumSubnetsResponse) []uint32 {
-	if response == nil || response.EnumInfo == nil {
-		return nil
-	}
-	return response.EnumInfo.Elements
 }
 
 // formatIPv4 renders a scope address the way a person reads it. MS-DHCPM

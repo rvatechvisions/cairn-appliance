@@ -77,9 +77,14 @@ report_versions() {
 }
 
 make_config_dir() {
-  # 700, because the keytab lives here. The directory is created before the
-  # keytab exists so there is no window in which a keytab sits in a
-  # world-readable directory while somebody fixes the permissions.
+  # 700, because the appliance's private key and its settings live here. The
+  # directory is created and locked down before anything is written into it,
+  # so there is no window in which a key sits in a world-readable directory
+  # while somebody fixes the permissions.
+  #
+  # It held a keytab in the withdrawn design. It does not now -- the client's
+  # credential is fetched from the portal per run and never written here --
+  # and preflight refuses to start if it finds one.
   mkdir -p "$CONFIG_DIR" || return 1
   chmod 700 "$CONFIG_DIR" || return 1
   chown root:root "$CONFIG_DIR" || return 1
@@ -186,5 +191,9 @@ fi
 echo
 echo "Next, in order:"
 echo "  1. Fill in ${CONFIG_DIR}/settings.env"
-echo "  2. Put the keytab at the path it names, mode 600, root only"
+echo "  2. Run ./enroll.sh, which generates this appliance's key pair here"
 echo "  3. Run ./preflight.sh"
+echo
+echo "There is no keytab and no password on this box, deliberately. The"
+echo "credential is held in the portal and fetched per run, so preflight"
+echo "REFUSES to start if it finds either one here."

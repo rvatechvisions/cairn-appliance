@@ -6,10 +6,10 @@
 #
 # Kerberos, Active Directory over LDAP, the DNS zones held in the directory,
 # and DHCP over MS-DHCPM. They are four different things and they fail for four
-# different reasons: a keytab that has gone stale, an account that cannot read
-# the directory, a domain whose DNS is not directory-integrated, and an account
-# that is not in DHCP Users. Reporting them as one verdict sends somebody to
-# fix whichever one they thought of first.
+# different reasons: a credential the KDC will not accept, an account that
+# cannot read the directory, a domain whose DNS is not directory-integrated,
+# and an account that is not in DHCP Users. Reporting them as one verdict
+# sends somebody to fix whichever one they thought of first.
 #
 # So each is asked on its own and answered on its own, and a failure in one
 # does not stop the others being tried. `set -e` is deliberately not used.

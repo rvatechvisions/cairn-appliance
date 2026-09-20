@@ -172,10 +172,32 @@ collector rather than an argument.
 
 ## Installing
 
-**If you are building the lab this runs in, read `LAB-BUILD.md` instead.** It
-covers the two virtual machines, the service account and its exact rights, the
-credential, and what every line of preflight's output means — written for
-somebody who has read none of this.
+**Running it for the first time? Read `LAB-BUILD.md` instead.** One Linux VM,
+one read-only account, three commands, and what every line of preflight's
+output means — written for somebody who has read none of this.
+
+### The first run is against RVA Tech Visions' own production domain
+
+Not a built lab forest. **RVA becomes the first customer of its own
+appliance** — it is already an organization in Cairn with five connections and
+has never had a collector one.
+
+**That changes what the read-only constraints are for, and it is worth saying
+where somebody will read it.** Until now they protected a hypothetical
+customer. The first real run points this software at Jackie's own Active
+Directory, DNS and DHCP — the directory his business runs on. Every scan that
+forbids a state-changing cmdlet, every enumeration that is a read, and the
+`DHCP Users`-and-nothing-more grant are now protecting the estate of the person
+who wrote the rules.
+
+It also raises what a passing run is worth. A toy forest with one scope and two
+objects answers *does the protocol work*. A directory somebody actually uses,
+with real accumulated history, answers the question that decides whether this
+becomes a product.
+
+The appliance writes nothing, anywhere. The one change to the directory is the
+service account, created by hand by the person who owns the domain — the same
+distinction this project already draws for `create-app-registration.ps1`.
 
 Three steps, in order, and the first contacts nothing.
 

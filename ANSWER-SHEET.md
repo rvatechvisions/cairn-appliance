@@ -2,8 +2,8 @@
 
 One page. What to set up, what to run, and what each answer means.
 
-**Building the lab from nothing? Read `LAB-BUILD.md`.** This page assumes the
-environment exists.
+**First run? Read `LAB-BUILD.md`.** It is one Linux VM against RVA's own
+domain, not a forest you build.
 
 ---
 
@@ -11,8 +11,8 @@ environment exists.
 
 | | |
 | --- | --- |
-| Domain controller | Holds DNS. DHCP running somewhere you can name |
-| Service account | Ordinary domain user **+ DHCP Users**. Nothing else |
+| Domain | **RVA's own** — AD, DNS and DHCP, already there. Nothing to build |
+| Service account | Ordinary domain user **+ DHCP Users**. Nothing else. Verify with `Get-ADPrincipalGroupMembership` — exactly two lines |
 | Credential | **Not on the appliance.** Held in the portal, fetched per run, used from memory. In the lab, typed into the shell for one run |
 | Appliance | Debian 12 / Ubuntu 24.04, **one interface**, **one resolver** (the customer's DNS), **not domain-joined** |
 | Clock | Within five minutes of the DC |

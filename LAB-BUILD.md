@@ -1,243 +1,100 @@
-# Building the lab
+# Running the appliance against RVA's own domain
 
 **Start here. This is the guide to the environment; `README.md` is the guide to
-the appliance that runs inside it.** It assumes you have read neither that file
-nor anything else, and it does not send you to another document to find a value
-you need.
+the appliance.** It assumes you have read neither that file nor anything else.
 
-You will build two virtual machines, create one account, run three commands,
-and read one page of output. Budget two hours the first time, most of it
-waiting for Windows to install.
+You are not building a domain. **RVA Tech Visions already has one** — Active
+Directory, DNS and DHCP, real and in use. This guide adds one Linux VM to it,
+creates one read-only account, and runs three commands.
 
----
-
-## Why this exists at all
-
-Cairn reads a customer's device inventory. For a school district, the two
-sources that actually say what is on the network are **Active Directory** and
-**DHCP**, and both live on Windows servers inside the district.
-
-The question this lab answers is whether a small Linux box, sitting on the
-network but **not joined to the domain**, can read them with an ordinary
-read-only account. If it can, districts get an appliance instead of a Windows
-server they have to patch, licence and own.
-
-**Nobody has run this yet.** The code exists and has been exercised against
-made-up data; it has never met a domain controller. That is what the lab is
-for, and it is why the output matters more than whether it passes.
+**Budget half an hour.** Most of it is the Debian install.
 
 ---
 
-## What you need before you start
+## What this is, and why it is RVA's own domain rather than a built one
 
-| | |
-| --- | --- |
-| A hypervisor | Hyper-V, VMware Workstation, Proxmox or VirtualBox. Anything that runs two VMs on one network |
-| Windows Server ISO | **2022**, Standard, *Desktop Experience*. The Microsoft evaluation ISO is fine — 180 days, no key |
-| Debian ISO | **Debian 12 (bookworm)**, netinst |
-| Disk | About 60 GB total: 40 for Windows, 20 for Debian |
-| Memory | 4 GB for Windows, 2 GB for Debian |
-| Time | ~90 minutes of Windows installation and promotion, ~20 minutes of everything else |
+Cairn reads a customer's device inventory. For a district the two sources that
+actually say what is on the network are **Active Directory** and **DHCP**, and
+both live on Windows servers inside the customer's building.
 
-### The one network rule that matters
+The question is whether a small Linux box, on the network but **not joined to
+the domain**, can read them with an ordinary read-only account. If it can,
+customers get an appliance instead of a Windows server they have to patch,
+licence and own.
 
-**Both VMs go on the same isolated virtual network, and that network has no
-other DHCP server on it.** Not your home network, not the office LAN — an
-internal-only virtual switch. You are about to stand up a DHCP server and a
-DNS server, and putting either on a network that already has one is how you
-spend an afternoon debugging somebody else's router.
+**Testing it against a built toy forest would prove less than it looks.** A
+forest with one scope and two objects answers *does the protocol work*; it does
+not answer *does this work on a directory somebody actually uses*, which is the
+question. RVA's domain has real objects, real leases, real DNS and real
+accumulated history — the same shape as a customer's, at a smaller size.
 
-In Hyper-V that is a switch of type *Internal*. In VMware it is a *Host-only*
-network. In VirtualBox it is an *Internal Network*.
+**So RVA Tech Visions becomes the first customer of its own appliance.** It is
+already an organization in Cairn with five connections — Microsoft, Google,
+Meraki, UniFi and CrowdStrike — and has never had a collector one. This is the
+sixth, and it is the same path a district would take.
 
-### Why Debian 12 specifically
+That also disposes of a question that was open: there is no fake organization
+sitting beside two paying clients, no naming games, and no risk of a test
+tenant's identifiers colliding with the demonstration's. The round trip is
+genuinely the round trip because the tenant is genuinely a tenant.
 
-Three reasons, in the order they matter:
+### What that means for care, said plainly
 
-1. **`bootstrap.sh` installs with `apt` and names Debian package names.** On
-   anything RPM-based it fails immediately.
-2. **Everything needed is in bookworm's own repositories** — `krb5-user`,
-   `ldap-utils`, `golang-go`, `jq`. No third-party repository, no backports,
-   nothing to trust beyond Debian.
-3. **It is the platform Cairn already runs on.** The portal's container is
-   built on `node:24-bookworm-slim`, so bookworm is a userland this project
-   already keeps working. One fewer unfamiliar variable when something breaks.
+**This runs against RVA's production domain.** Every read-only constraint in
+the appliance now protects Jackie's own business rather than a hypothetical
+one — which is the right way round, and is worth knowing before you type
+anything.
 
-**Ubuntu Server 24.04 LTS works identically** and is a fine substitute if you
-already have the ISO — same package names, same commands. Do not use a
-desktop-edition Linux: `systemd-resolved` and NetworkManager both rewrite
-`/etc/resolv.conf`, and this appliance needs exactly one resolver that stays
-put.
+Nothing in this guide changes the domain except **one account you create
+yourself**, by hand, in section 2. The appliance itself never writes: every
+call it makes is a bind, a search or an enumeration.
 
 ---
 
-## Part 1 — the Windows Server VM
+## 1 — one Linux VM
 
-Install Windows Server 2022, Desktop Experience, and set an Administrator
-password. Nothing unusual.
+**Debian 12 (bookworm)**, netinst, on RVA's network. 2 GB memory, 20 GB disk.
 
-### 1.1 Give it a fixed address and a name
+At the software selection screen, **untick everything except "standard system
+utilities"** — no desktop, no web server.
 
-Open PowerShell **as Administrator** on the Windows VM. Everything in Part 1
-and Part 2 runs there.
+### Three things about the network, and they are not preferences
 
-```powershell
-Rename-Computer -NewName DC1 -Restart
-```
+- **One network adapter.** A second active interface lets a DNS query leave by
+  one path towards a resolver configured for the other and wait out its
+  retries. Neither failure announces itself; the symptom is a delay that reads
+  as the portal being slow. This project has already lost an evening to exactly
+  that.
+- **One resolver, and it is RVA's DC.** Not a public resolver, not a router
+  that forwards to one. If the box resolves the domain anywhere other than the
+  DC, everything below still runs and means nothing.
+- **Not joined to the domain, and it will not be.** A collector must not be a
+  member of the trust boundary it reads. There is no `realm join` step in this
+  guide and there is not going to be one.
 
-After it reboots, set a static address. Replace `Ethernet` if your adapter is
-named something else — `Get-NetAdapter` tells you.
-
-```powershell
-New-NetIPAddress -InterfaceAlias Ethernet -IPAddress 10.99.0.10 `
-  -PrefixLength 24 -DefaultGateway 10.99.0.1
-Set-DnsClientServerAddress -InterfaceAlias Ethernet -ServerAddresses 127.0.0.1
-```
-
-There is no gateway on an isolated switch and that is fine — nothing in this
-lab needs the internet once the ISOs are in.
-
-### 1.2 Promote it to a domain controller
-
-```powershell
-Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
-
-Install-ADDSForest -DomainName cairnlab.test -DomainNetbiosName CAIRNLAB `
-  -InstallDns -Force
-```
-
-It will ask for a **Directory Services Restore Mode password**. Write it down;
-you will not need it in this lab, but a DC without one recorded somewhere is a
-bad habit.
-
-The VM reboots and comes up as a domain controller for `cairnlab.test`.
-
-> **Why `.test`.** It is reserved by RFC 2606 for exactly this, so it can never
-> collide with a real domain anybody owns. Do not use `.local` — it collides
-> with multicast DNS — and do not use a real company's name.
-
-### 1.3 Add the DHCP role, authorise it, and create a scope
-
-```powershell
-Install-WindowsFeature DHCP -IncludeManagementTools
-
-Add-DhcpServerInDC -DnsName dc1.cairnlab.test -IPAddress 10.99.0.10
-
-Add-DhcpServerv4Scope -Name "Lab Clients" `
-  -StartRange 10.99.0.100 -EndRange 10.99.0.200 `
-  -SubnetMask 255.255.255.0 -State Active
-
-Set-DhcpServerv4OptionValue -ScopeId 10.99.0.0 `
-  -DnsServer 10.99.0.10 -DnsDomain cairnlab.test
-```
-
-`Add-DhcpServerInDC` is the one that matters for the appliance: it writes this
-server into the directory's list of authorised DHCP servers, which is one of
-the things preflight reads.
-
-### 1.4 Create a computer object that is not the DC
-
-```powershell
-New-ADComputer -Name LAB-WS01 -SamAccountName LAB-WS01 `
-  -Description "Lab computer object, never logged on"
-```
-
-One is enough. It gives the directory read something to return besides the
-domain controller itself.
-
-### 1.5 Check the clock
-
-```powershell
-w32tm /query /status
-```
-
-Kerberos refuses any request more than five minutes away from the KDC, and the
-error it gives says nothing about clocks. If the Windows VM's time is wrong,
-fix it here rather than wondering later.
-
----
-
-## Part 2 — the read-only service account
-
-Still in PowerShell as Administrator on the Windows VM.
-
-### 2.1 Create it
-
-```powershell
-New-ADUser -Name "svc-cairn" -SamAccountName "svc-cairn" `
-  -UserPrincipalName "svc-cairn@cairnlab.test" `
-  -AccountPassword (Read-Host -AsSecureString "Password for svc-cairn") `
-  -PasswordNeverExpires $true -CannotChangePassword $true -Enabled $true
-```
-
-Choose a password you are willing to type into a terminal later, and one you
-would not mind being disclosed — this is a lab domain and it protects nothing
-real.
-
-### 2.2 Give it exactly one right, and no others
-
-```powershell
-Add-ADGroupMember -Identity "DHCP Users" -Members "svc-cairn"
-```
-
-**That is the whole grant.** `DHCP Users` is read-only on the DHCP service;
-`Domain Users`, which every account gets automatically, is what lets it read
-the directory and the DNS zones.
-
-### 2.3 Verify it, because this is the claim the whole design rests on
-
-```powershell
-Get-ADPrincipalGroupMembership svc-cairn | Select-Object -ExpandProperty Name
-```
-
-**It must print exactly two lines:** `Domain Users` and `DHCP Users`.
-
-If anything else appears — `Domain Admins`, `DHCP Administrators`, `Account
-Operators`, `Server Operators` — remove it and run the check again. The
-sentence *this account can read and cannot change anything* is what a
-customer's security review will be told, and it is only true if this command
-says so.
-
----
-
-## Part 3 — the Linux appliance VM
-
-Install Debian 12 from the netinst ISO. At the software selection screen,
-**untick everything except "standard system utilities"** — no desktop, no web
-server. Give it **one** network adapter on the same isolated switch.
-
-### 3.1 Let it take a DHCP lease from the lab
-
-Leave its networking on DHCP. That is deliberate and does two things at once:
-it proves the DHCP server works, and it puts a **live lease** in the scope for
-the appliance to read later. The lease of the machine doing the reading is a
-perfectly good first lease.
-
-After it boots, check what it got:
+Take a DHCP lease from RVA's own server — that is what a customer's appliance
+would do, and it is one more live lease for the appliance to read later. After
+it boots:
 
 ```bash
 ip -brief address show
 cat /etc/resolv.conf
 ```
 
-**You want one address in `10.99.0.100–200` and exactly one `nameserver`
-line, reading `10.99.0.10`.** If you see two addresses or two resolvers, fix
-that before going further: a second interface lets a lookup leave by one path
-towards a resolver configured for the other, and the symptom is not an error —
-it is a delay that reads as the portal being slow. This project has already
-lost an evening to exactly that.
+**One address, and exactly one `nameserver` line pointing at the DC.** If you
+see two of either, fix that before going further.
 
-Confirm the domain resolves:
+Then check the domain resolves and the clock is close:
 
 ```bash
-getent hosts dc1.cairnlab.test
+getent hosts <dc-hostname>
+timedatectl status
 ```
 
-### 3.2 Get the appliance onto the box
+Kerberos refuses any request more than five minutes from the KDC, and the error
+it gives says nothing about clocks.
 
-The repository is `github.com/rvatechvisions/cairn-appliance`, private. Either
-clone it with a token, or — simpler for an isolated lab — copy the folder in
-from the hypervisor's shared folder or a USB image.
+### Get the appliance onto it
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
@@ -247,192 +104,203 @@ cd cairn-appliance
 
 ---
 
-## Part 4 — the credential, and the one decision that is not mine
+## 2 — the read-only account, in RVA's domain
 
-This is the part of the design that changed on 20 September 2026, and it is
-worth understanding before you run anything.
+**This is the only change anybody makes to the directory.** You make it, by
+hand, in your own domain — the same distinction this project already draws for
+`create-app-registration.ps1`, where a technician makes a one-off change with
+their own credentials and the collector that follows only reads.
 
-**The appliance is not joined to the domain and never will be.** A collector
-must not be a member of the trust boundary it reads. Instead:
+On a domain-joined Windows machine, PowerShell as a Domain Admin:
 
-- the customer enters the read-only credential **into the portal**;
-- the appliance connects **out** to the portal and fetches it when it runs;
-- it authenticates to the portal with a **keypair generated on the appliance
-  at enrolment** — the public half is registered, the private half never
-  leaves the box;
-- the credential is used from a **memory-backed Kerberos cache** and dropped;
-- revocation is one action in the portal, not a visit to the site.
+```powershell
+New-ADUser -Name "svc-cairn" -SamAccountName "svc-cairn" `
+  -UserPrincipalName "svc-cairn@<your-domain>" `
+  -AccountPassword (Read-Host -AsSecureString "Password for svc-cairn") `
+  -PasswordNeverExpires $true -CannotChangePassword $true -Enabled $true
 
-### The portal half of that is not built
+Add-ADGroupMember -Identity "DHCP Users" -Members "svc-cairn"
+```
 
-There is no page to enter a credential into and no endpoint to fetch it from.
-Saying so plainly matters more than it might seem: a guide that told you to
-"enter the credential in the portal" would have you looking for a screen that
-does not exist.
+**That is the whole grant.** `DHCP Users` is read-only on the DHCP service;
+`Domain Users`, which every account gets automatically, is what lets it read
+the directory and the DNS zones. Nothing else is added and nothing else is
+needed.
 
-**So the lab uses a stand-in, and it is honest about what it is.** You type the
-password into the appliance's shell for one run:
+### Verify it, because this is the claim the whole design rests on
+
+```powershell
+Get-ADPrincipalGroupMembership svc-cairn | Select-Object -ExpandProperty Name
+```
+
+**It must print exactly two lines: `Domain Users` and `DHCP Users`.**
+
+If anything else appears — `Domain Admins`, `DHCP Administrators`, `Account
+Operators`, `Server Operators`, `Backup Operators` — remove it and run the
+check again. *This account can read and cannot change anything* is what a
+customer's security review will be told, and it is only true if this command
+says so.
+
+### Where to put it
+
+Put it in whichever OU RVA uses for service accounts. It does not matter to the
+appliance, and it matters to whoever audits the directory in six months.
+
+---
+
+## 3 — the credential, and what is not built
+
+The design: the customer enters the credential **into the portal**, the
+appliance connects **out** and fetches it per run, `kinit`s into a
+**memory-backed** cache, and drops it. Nothing durable on the box. Revocation
+is one action in the portal.
+
+**The portal half does not exist yet** — there is no page to enter a credential
+into and no endpoint to fetch it from. Saying so plainly matters: a guide that
+told you to enter it in the portal would have you hunting for a screen that is
+not there.
+
+**Preflight needs none of it.** It reads and submits nothing, so for this run
+you type the password into the appliance's shell:
 
 ```bash
 read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
 ```
 
-`read -rs` does not echo it and `-s` keeps it out of your shell history. It
-lives in one environment variable and one in-memory ticket cache, and nothing
-writes it to disk — so the *durability* property the design is about is
-genuinely tested. What is **not** tested is the portal round trip, and what is
-**not** acceptable is doing this at a customer: their credential must never
-pass through anybody's terminal, ours least of all.
+`read -rs` does not echo and keeps it out of shell history. It lives in one
+environment variable and one in-memory ticket cache, and nothing writes it
+down — so the *durability* property is genuinely tested. What is **not** tested
+is the round trip, and what is **not** acceptable is doing this at a customer.
 
-### The decision for you, Jackie — I am not making this one
+### What Cairn needs from you for this run: nothing
 
-**Does the lab appliance talk to production Cairn with a lab organization, or
-to a portal running locally?**
+No connection to create, no token to issue, no organization to set up.
+Preflight makes no outbound call beyond RVA's own domain controllers.
 
-It does not arise today, because there is nothing to talk to. It arises the
-moment the portal half is built, and the answer shapes how that gets written,
-so it is better decided now.
-
-**My recommendation: production, with a lab organization** — with two
-conditions below. The reasoning:
-
-- **The thing under test is the round trip.** Enrolment, a signed request, a
-  credential fetched over real TLS from the real host, and revocation taking
-  effect. A local portal exercises *a* portal; it does not exercise the one
-  clients use, and the difference is exactly where this kind of thing breaks.
-- **It is the same argument the project already accepted elsewhere.** Figures
-  carried into a room come from the host that will be shown, not from a probe
-  against an embedded database.
-
-**The two conditions, because the cost is real:**
-
-1. **The lab organization sits beside two paying clients.** It must be named
-   so nobody could mistake it — *Cairn Lab (test)* rather than anything
-   district-shaped — and the credential stored against it must be this lab
-   domain's, which protects nothing.
-2. **Its identifiers must not collide with the demonstration's.** `build.sh`
-   refuses a demo seed sharing a site code, hostname prefix, OUI, /24 or
-   organization name with any production tenant, and it reads production's own
-   rows to do it. A lab tenant in production joins that comparison. This guide
-   uses `cairnlab.test`, `10.99.0.0/24` and `LAB-` / `DC1`, none of which the
-   demonstration uses — keep it that way and the build stays green.
-
-**The case for a local portal, stated fairly:** nothing test-shaped ever
-touches the production database, and you can break it freely. If either
-condition above feels uncomfortable, that is the better answer and the cost is
-that the credential path gets tested against a portal nobody else uses.
+**Cairn becomes involved at the next step, not this one** — when the appliance
+submits. That needs a `collector` connection on RVA Tech Visions and a token,
+which is the mechanism the existing DHCP collector at a live district already uses, plus the credential
+path above. Both are work, and neither blocks the run below.
 
 ---
 
-## Part 5 — the three commands
-
-On the appliance, in this order.
+## 4 — the three commands
 
 ```bash
 sudo ./bootstrap.sh
 ```
 
 Installs `krb5-user`, `ldap-utils`, Go and `jq`; creates `/etc/cairn-appliance`
-at mode 700; writes a settings template; and prints this host's resolvers and
-interfaces so you can see its shape. **It contacts no domain.** It is
-idempotent, and a failing step does not stop the ones after it — read the
-summary at the end rather than the first error.
+at mode 700; writes a settings template; prints this host's resolvers and
+interfaces. **It contacts no domain.** It is idempotent, and a failing step
+does not stop the ones after it — read the summary at the end rather than the
+first error.
 
-Now fill in the settings file:
+Fill in the settings:
 
 ```bash
 sudo nano /etc/cairn-appliance/settings.env
 ```
 
 ```
-CAIRN_REALM=CAIRNLAB.TEST
-CAIRN_DC=dc1.cairnlab.test
-CAIRN_PRINCIPAL=svc-cairn@CAIRNLAB.TEST
-CAIRN_DHCP_SERVERS=dc1.cairnlab.test
+CAIRN_REALM=<YOUR-DOMAIN-IN-UPPER-CASE>
+CAIRN_DC=<dc-hostname.your-domain>
+CAIRN_PRINCIPAL=svc-cairn@<YOUR-DOMAIN-IN-UPPER-CASE>
+CAIRN_DHCP_SERVERS=<dhcp-hostname.your-domain>
 CAIRN_PORTAL=
 ```
 
-**The realm is upper case and the host names are lower case.** Kerberos treats
-the realm as case-sensitive and it is the single most common reason step 1
-fails in a new lab.
+**The realm is upper case and host names are lower case.** Kerberos treats the
+realm as case-sensitive, and this is the single most common reason step 1 fails
+on a first run.
+
+`CAIRN_DHCP_SERVERS` takes a comma-separated list. If RVA runs DHCP on more
+than one server, name them all — each is asked and answered separately.
 
 ```bash
 sudo ./enroll.sh
 ```
 
-Generates this appliance's keypair and prints the public half. Since the portal
-side does not exist, it tells you so rather than pretending it registered.
+Generates this appliance's keypair and prints the public half. The private half
+never leaves the box. Since the portal side does not exist, it says so rather
+than implying it registered.
 
 ```bash
 read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
 sudo -E ./preflight.sh
 ```
 
-**`sudo -E`, not plain `sudo`** — without `-E` the password does not survive
-into the elevated environment and step 1 reports it had no credential.
+**`sudo -E`, not plain `sudo`.** Without `-E` the password does not survive
+into the elevated environment and step 1 reports it had no credential — which
+is true, and is not what you were trying to find out.
 
 ---
 
-## Part 6 — reading the result
+## 5 — reading the result
 
-Preflight asks six things separately and answers each in **three** states:
-**found**, **refused**, and **not asked**. The third is not a failure of the
-host — it means something the check depended on did not happen, or nothing
-configured it, and telling it apart from a refusal is the whole point.
+Six things, asked separately, each answered in **three** states: **found**,
+**refused**, and **not asked**. The third is not a failure of the host — it
+means something a check depended on did not happen, or nothing configured it,
+and telling it apart from a refusal is the whole point.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `no keytab, no stored password` | Nothing durable on the box, which is the design's central claim | Nothing. This is the good outcome |
 | `REFUSING TO CONTINUE. A durable credential is on this appliance` | A keytab or a stored password was found | Remove it. If it was a password, treat it as disclosed |
 | `not enrolled: no appliance key` | `enroll.sh` has not been run | Run it |
-| `CREDENTIAL SOURCE: this operator's shell` | The lab path, working as intended | Nothing — but never do this at a customer |
-| `FOUND: a ticket was issued` | **Step 1 passed.** Kerberos works from an unjoined Linux host | This is the first real result of the exercise |
-| `REFUSED: no ticket` | Wrong password, wrong realm case, or a clock more than five minutes out | Check the realm is upper case, then `w32tm /query /status` on the DC |
+| `CREDENTIAL SOURCE: this operator's shell` | Expected for this run | Nothing — but never at a customer |
+| `FOUND: a ticket was issued` | **Step 1 passed.** Kerberos works from an unjoined Linux host against a real domain | This is the first real result of the exercise |
+| `REFUSED: no ticket` | Wrong password, realm not upper case, or a clock more than five minutes out | Check the realm's case first — it is usually that |
 | `FOUND: the directory answered a bound read` | **Step 2 passed.** The account can read AD over LDAP | — |
-| `FOUND: N zone(s) readable` | **Step 3 passed.** DNS is directory-integrated and readable | — |
-| `NOT PRESENT: no directory-integrated DNS` | A normal state at some sites, not a failure | Nothing. In this lab it should be present; if it is not, DNS was installed separately from AD |
-| `FOUND: the container answered` | **Step 4 passed.** The authorised-server list is readable | — |
-| `bound: MS-DHCPM on dc1…` then scopes | **Step 5 passed.** This is the answer the whole spike was about | Read the scope list and the lease counts |
-| `REFUSED by dc1…` | Almost always: the account is not in `DHCP Users` | Re-run the check in 2.3 |
+| `FOUND: N zone(s) readable` | **Step 3 passed.** DNS is directory-integrated and readable | Check N against what RVA actually has |
+| `NOT PRESENT: no directory-integrated DNS` | A normal state at some sites, not a failure | If RVA's DNS *is* AD-integrated and this says otherwise, that is a finding worth keeping |
+| `FOUND: the container answered` | **Step 4 passed.** The authorised-server list is readable. Needs only an authenticated user | Compare the list against the DHCP servers you believe exist |
+| `bound: MS-DHCPM on <dc>` then scopes | **Step 5 passed.** This is the answer the whole exercise was about | Read the scope list and the lease counts against what you know is there |
+| `REFUSED by <server>` | Almost always: the account is not in `DHCP Users` | Re-run the verification in section 2 |
 | `NOT ASKED` | Something it depends on failed, or nothing configured it | Fix what it names. It is not evidence about the domain |
-| `PARTLY PROVEN: N answered and M refused` | **A result, not a failed run** | Read it. Steps 4 and 5 need different rights, so one refusal does not stand in for the others |
+| `PARTLY PROVEN: N answered and M refused` | **A result, not a failed run** | Steps 4 and 5 need different rights, so one refusal does not stand in for the others |
 
 ### What a good first run looks like
 
-Kerberos, LDAP, DNS and the authorised-server list all answering, and DHCP
-either answering with scopes or refusing with a rights error. **Either of those
-last two is a successful lab run** — one proves the appliance can read DHCP
-from an unjoined host, the other proves it cannot with the rights we thought
-were enough, and both are worth more than the guess we have now.
+Kerberos, LDAP, DNS and the authorised-server list answering, and DHCP either
+answering with scopes or refusing with a rights error. **Either of those last
+two is a successful run** — one proves the appliance can read DHCP from an
+unjoined host, the other proves it cannot with the rights we thought were
+enough. Both are worth more than the guess we have now.
 
-### Two things it will not do, so you are not waiting for them
+### The part only you can check
 
-**It asserts no expected count.** It will not tell you the lab is missing a
-scope or a zone. It cannot know what is correct for a site, and a check that
-invents an expectation produces a confident wrong verdict.
-
-**It submits nothing.** No upload, no portal call, no outbound connection
-beyond the domain controller. The output is the deliverable.
+Preflight **asserts no expected count**. It will not tell you a scope or a zone
+is missing, because it cannot know what is correct for a site. You can: you
+know how many DHCP servers RVA has and roughly how many leases. **Compare what
+it printed against what you know is there** — that comparison is the actual
+result of this exercise, and nobody else can make it.
 
 ---
 
 ## The residual risk, stated rather than buried
 
 **While a run is happening, the credential is in that appliance's memory. A
-compromised appliance can capture it.** There is no arrangement of this design
-that removes that — the box has to hold the credential to use it.
+compromised appliance can capture it.** No arrangement removes that — the box
+has to hold the credential to use it.
 
 Two things bound it, and neither is a dodge:
 
 - **It is true of the Windows alternative too.** A domain-joined collector
   running under a group Managed Service Account can be made to use that
-  identity by anybody who owns the box. Holding a credential in memory to use
-  it is the floor for any collector, not a flaw in this one.
-- **What is captured is read-only.** An ordinary domain user plus `DHCP Users`
-  can enumerate; it cannot change a scope, a lease, an account or a policy. The
-  customer's own administrator can verify that from the account, without
-  trusting our description of it.
+  identity by anybody who owns the box. Holding a credential in order to use it
+  is the floor for any collector, not a flaw in this one.
+- **What is captured is read-only.** `svc-cairn` can enumerate; it cannot
+  change a scope, a lease, an account or a policy — and section 2's
+  verification is what makes that checkable rather than asserted.
 
-What this design *does* remove is everything that outlives the run: no keytab,
-no password in a file, no credential in a ticket or a chat message, and nothing
-for the next person with a shell on the box to find.
+What this design removes is everything that outlives a run: no keytab, no
+password in a file, no credential in a ticket or a message, and nothing for the
+next person with a shell on the box to find.
+
+## When you are finished
+
+If the appliance is not staying, disable `svc-cairn` rather than deleting it —
+a disabled account leaves the audit trail of what it did, and deleting one is a
+change nobody can review afterwards. If it is staying, leave it and move on to
+the collector connection in Cairn.

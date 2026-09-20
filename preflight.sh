@@ -560,6 +560,52 @@ capability_ldap() {
       say ""
       say "  Then run this again. Nothing on the domain needs changing."
       ;;
+
+    *"Server not found in Kerberos database"*)
+      # The name, not the rights, and not the ticket.
+      #
+      # GSSAPI asked the KDC for ldap/<CAIRN_DC> and the KDC has no such
+      # service principal. A domain controller registers its SPNs against the
+      # hostname of the machine account, so a CNAME, a round-robin record or
+      # any convenience name pointing at it resolves perfectly and has no SPN
+      # of its own. `rdns = false` in the generated krb5.conf means the name is
+      # used exactly as configured rather than being replaced by whatever a
+      # PTR says -- which is the safer default and is what surfaces this.
+      say ""
+      say "  THIS IS THE NAME IN CAIRN_DC, NOT THE ACCOUNT AND NOT THE TICKET."
+      say "  Step 1 holds a valid ticket; the KDC simply has no service"
+      say "  principal called ldap/${DC}."
+      say ""
+      say "  A domain controller registers its service principals against its"
+      say "  own hostname. An alias that points at it -- a CNAME, a"
+      say "  round-robin record, a friendly name somebody added -- resolves"
+      say "  correctly and has no principal of its own, which is exactly what"
+      say "  this looks like."
+
+      # Read what the resolver says rather than asserting what it probably is.
+      local canonical
+      canonical="$(getent hosts "$DC" 2>&1)"
+      if [ -n "$canonical" ]; then
+        say ""
+        say "  What this host's resolver says ${DC} is:"
+        printf '%s\n' "$canonical" | sed 's/^/    /'
+      fi
+
+      # The authoritative list of domain controllers, when the tool is here.
+      if command -v dig >/dev/null 2>&1 && [ -n "$REALM" ]; then
+        local srv
+        srv="$(dig +short -t SRV "_ldap._tcp.$(printf '%s' "$REALM" | tr 'A-Z' 'a-z')" 2>&1)"
+        if [ -n "$srv" ]; then
+          say ""
+          say "  Domain controllers this domain advertises in DNS:"
+          printf '%s\n' "$srv" | sed 's/^/    /'
+        fi
+      fi
+
+      say ""
+      say "  Set CAIRN_DC to a controller's own hostname and run this again."
+      say "  Nothing on the domain needs changing."
+      ;;
   esac
 
   REFUSED=$((REFUSED + 1))

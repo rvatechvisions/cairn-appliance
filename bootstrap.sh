@@ -70,7 +70,7 @@ install_packages() {
   apt-get update -qq || return 1
   apt-get install -y -qq --no-install-recommends \
     krb5-user ldap-utils libsasl2-modules-gssapi-mit \
-    ca-certificates curl jq golang-go || return 1
+    dnsutils ca-certificates curl jq golang-go || return 1
 }
 
 report_versions() {

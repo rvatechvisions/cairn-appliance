@@ -150,15 +150,25 @@ func main() {
 				"  IF IT IS ALREADY THERE, this is not the answer and the refusal is\n"+
 				"  something else. Seen on RVA's own domain, 20 September 2026, with the\n"+
 				"  membership present. What separates the possibilities is asking the\n"+
-				"  same question from Windows as the same account:\n"+
+				"  same question from Windows as the same account. Use runas /netonly:\n"+
+				"  it keeps the local session as whoever you are and sends only the\n"+
+				"  NETWORK request as this account, so it needs no logon rights\n"+
+				"  anywhere. Do NOT use Invoke-Command -- that is WinRM, it needs\n"+
+				"  Remote Management Users, and its refusal is about the session\n"+
+				"  rather than about DHCP.\n"+
 				"\n"+
+				"    runas /netonly /user:DOMAIN\\%s \"powershell -NoExit\"\n"+
 				"    Get-DhcpServerv4Scope -ComputerName <the DHCP server>\n"+
+				"\n"+
+				"  Without the RSAT module, netsh asks the same interface:\n"+
+				"\n"+
+				"    netsh dhcp server \\\\<the DHCP server> show scope\n"+
 				"\n"+
 				"  Refused there too, and the grant is genuinely not sufficient on this\n"+
 				"  server, which is a question for whoever administers it. Answered\n"+
 				"  there, and the account can read DHCP while THIS probe cannot, which\n"+
 				"  makes it ours.\n",
-				account, account)
+				account, account, account)
 		}
 		os.Exit(1)
 	}

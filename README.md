@@ -13,7 +13,7 @@ collector is a separate thing and is not here.
 
 **20 September 2026, RVA Tech Visions' own production domain**, from a Debian 13
 host that is **not joined to it**, with an ordinary domain user whose only extra
-membership is `DHCP Users`. Five of six capabilities answered.
+membership is `DHCP Users`. **All six capabilities answered.**
 
 | | |
 | --- | --- |
@@ -23,20 +23,52 @@ membership is `DHCP Users`. Five of six capabilities answered.
 | Active Directory over LDAP | **Proven** — bound read, SASL SSF 256 |
 | DNS zones in the directory | **Proven** — 2 zones readable |
 | Authorised DHCP servers | **Proven** — `CN=NetServices` read, 2 entries |
-| DHCP over MS-DHCPM | **Not proven** — reaches the service and is refused the read; see below |
+| DHCP over MS-DHCPM | **Proven** — both interfaces bound, `R_DhcpEnumSubnets` answered, one scope enumerated |
 
-### The DHCP refusal is an access check, not a protocol failure
+### `DHCP Users` is sufficient, and that is now evidence rather than belief
 
-**Said first, because a run that ends in REFUSED reads as *Linux cannot do
-this* and it is the opposite.** On that same run: the endpoint mapper resolved
-the dynamic port, **DHCPSRV and DHCPSRV2 both bound**, Kerberos sealed the
-transport from a ticket in a tmpfs cache, and `R_DhcpEnumSubnets` was
-dispatched. The DHCP service then made an authorization decision.
+**The finding, with what established it.** It mattered because the appliance's
+whole read-only position on DHCP rested on it and nothing had ever tested it:
 
-**Every layer works. go-msrpc works. What is unresolved is a grant**, and the
-two candidates — a service that has not re-read its group SIDs, and `DHCP
-Users` possibly not being sufficient for the enumerate calls — are in
-`ANSWER-SHEET.md` with a one-command test each.
+| | |
+| --- | --- |
+| `svc-cairn` in `DHCP Users`, nothing else | preflight refused, `ERROR_ACCESS_DENIED` |
+| `Restart-Service DHCPServer`, **nothing else changed** | preflight answered, one scope enumerated |
+
+**The DHCP Server service resolves the `DHCP Users` and `DHCP Administrators`
+SIDs on its own schedule**, so an account added afterwards is refused while its
+membership sits plainly in the directory.
+
+**`DHCP Administrators` is not required and should not be granted.** It is
+named here because that refusal invites somebody to add a wider role *to be
+safe*, and that one is write-capable — granting it would end this appliance's
+read-only position on DHCP for nothing.
+
+**Every client will hit this, so it is onboarding rather than troubleshooting.**
+`LAB-BUILD.md` carries the wording, framed to cost the client least: the
+membership takes effect at the next DHCP service restart, **a normal patch
+window is enough**, and an immediate restart is only needed if you want it
+working today. That matters where the DHCP server is a production domain
+controller — at Floyd it holds 3,405 leases, and a restart there gets announced
+rather than done quietly mid-install.
+
+### Proven to connect. Not proven to parse.
+
+**The distinction the result depends on.** `R_DhcpEnumSubnets` answered and the
+scope was empty, so **no client record has ever come back** — and the shape of
+`ClientUID` is exactly as unknown as it was before any of this ran.
+
+MS-DHCPM returns it as a 6-byte hardware address on some servers and an
+**11-byte client unique id carrying a subnet prefix** on others. **That is the
+field every device key in the portal is built on.** Getting it wrong writes a
+subnet prefix into every hardware address stored from that server — not a
+visible failure, but a device key that silently matches nothing, for every
+lease.
+
+So the honest line is: **subnets enumerated, clients not yet observed, the
+length histogram still unrecorded.** Preflight says so itself when a run sees no
+clients rather than printing a clean bill of health. A device on one of the
+scopes, a lease, and one more run settles it.
 
 **This answers the question `SPIKE-LINUX-DHCP-2026-09-19.md` was reopened for.**
 A Linux box outside the trust boundary can read a directory a district actually
@@ -44,63 +76,13 @@ uses. The credential model held throughout: the password existed in one
 process, the ticket in one tmpfs cache removed at exit, and nothing on the
 domain was changed by any of it.
 
-**What is not proven is as important.** Reading leases over MS-DHCPM is still
-untested, and it is the one capability the collector most needs. Four of the
-five that passed are LDAP reads, which is a narrower claim than "the appliance
-works".
+**What six of six does not mean.** Every capability answered; **one of them
+answered emptily.** The lease read connected and returned no clients, so the
+parse above remains open. Six of six is a claim about reach, not about the data
+that will come back.
 
-**Where the DHCP probe actually stands**, because "not proven" covers a wide
-range and this end of it is narrow:
-
-| | |
-| --- | --- |
-| Compiles, against go-msrpc v1.6.4 | Yes |
-| Endpoint mapper resolves the dynamic port | Yes |
-| Kerberos, from the tmpfs ccache | Yes |
-| MS-DHCPM binds, both interfaces | Yes |
-| `R_DhcpEnumSubnets` dispatched | Yes |
-| The server returns the scopes | **No — `ERROR_ACCESS_DENIED`** |
-
-**And the account is not the problem, which is the part that took longest to
-establish.** `svc-cairn` holds `Domain Users` and `DHCP Users` and nothing
-else, and from Windows over the network — `runas /netonly`, so no logon rights
-anywhere — both `Get-DhcpServerv4Scope` and `netsh dhcp server show scope`
-returned the scope. The grant is sufficient. Microsoft's client can read what
-this one cannot, so the difference is in how this asks.
-
-**Ruled out, each by a read rather than by reasoning:**
-
-- **The account.** `DHCP Users` is present and Microsoft's own client reads the
-  server with that credential.
-- **The transport.** See named pipes below.
-- **The request.** `R_DhcpEnumSubnets` was going out with an empty
-  `ServerIPAddress`, visible in the wire log. Filling it changed nothing. The
-  specification calls the parameter unused and this server agrees.
-
-**What is left is the security layer**, and it is a narrow question: what
-identity and authentication service the DHCP server sees from this client
-against what it sees from Microsoft's. The wire log shows the bind
-authenticating cleanly — `auth_length` 1488, acknowledged 140, `auth3` 93 —
-both interfaces taking their own security context through `alter_context`, and
-the call going out sealed at `auth_length` 76. The server authenticates this
-account and refuses the read.
-
-The two candidates, neither yet read: whether the PAC reaches the server's
-access check, so that `DHCP Users` membership is visible in the token it
-builds; and whether `ssp.KRB5` presents differently from the SPNEGO Windows
-negotiates. **Both are answerable from go-msrpc's source and neither needs a
-domain**, which is where this goes next.
-
-**Named pipes are not the answer either, and the reason is worth recording.**
-`ncacn_np` is RPC over SMB, so it needs `cifs/<host>` rather than `host/<host>`
-— but supplying it changes nothing: the KDC error reads *requesting for :* with
-an empty service name, because `dcerpc.WithTargetName` configures the RPC
-security and **SMB session setup negotiates separately**. Wiring that needs
-`WithSMBDialer` and is a larger change than a flag. Both principals exist on
-the domain; `kvno` confirmed `ldap/`, `host/` and `cifs/`.
-
-**Two findings from that run worth keeping**, both of which cost an hour and
-neither of which is discoverable from documentation:
+**Five findings from those runs worth keeping**, none discoverable from
+documentation and each of which cost an hour:
 
 - **An MIT `MEMORY:` ticket cache is private to the process that creates it.**
   `kinit` succeeds, exits, and takes the cache with it; every later process
@@ -110,6 +92,20 @@ neither of which is discoverable from documentation:
   PTR says>`, so a host holding a perfectly good ticket is told the server is
   not in the Kerberos database. `SASL_NOCANON on` is what fixed it, and
   `kvno` is what proved the principal had been there all along.
+- **The DHCP service does not listen on a fixed port.** It registers with the
+  endpoint mapper and takes what is free, so a client asks the mapper where the
+  interface lives. Dialling 135 and offering it MS-DHCPM authenticates happily
+  and is then refused *abstract syntax not supported* — a bind that succeeded
+  against the wrong door.
+- **A named pipe needs `cifs/`, not `host/`**, because `ncacn_np` is RPC over
+  SMB. And supplying it is not enough: `dcerpc.WithTargetName` configures the
+  RPC security while **SMB session setup negotiates separately**, which needs
+  `WithSMBDialer`. Not pursued — TCP works.
+- **`ERROR_NO_MORE_ITEMS` is an empty answer, not a failure to read.** The call
+  succeeded and the scope holds no clients. Rendering it as *could not be read*
+  is the refusal-as-empty-container defect inverted, and this direction is
+  worse: it makes a genuinely empty scope look like a fault in the appliance,
+  at a customer, where nobody can tell the difference.
 
 ---
 
@@ -123,7 +119,8 @@ result nobody can trust when they are missing.
 | --- | --- |
 | **A Windows domain** | One domain controller is enough. It must hold DNS, and DHCP must be running somewhere you can name |
 | **A service account** | An **ordinary domain user**, plus membership of **DHCP Users**. Nothing else. No Domain Admin, no delegation, no rights on the DCs |
-| **A keytab for it** | Generated on a domain-joined Windows host with `ktpass`, copied to the appliance, `chmod 600`, owned by root |
+| **No keytab** | **There is deliberately none.** The credential is held in the portal and fetched per run; `preflight.sh` refuses to start if it finds a keytab or a stored password. This row said to generate one with `ktpass` until 20 September 2026 and was left behind when the design changed |
+| **The DHCP service restarted since the account joined `DHCP Users`** | It caches the group SIDs. A normal patch window is enough — see `LAB-BUILD.md` |
 | **A Linux host** | Debian or Ubuntu. **Single-homed** — one interface carrying one address |
 | **One resolver** | The customer's DNS, and nothing else in `/etc/resolv.conf` |
 | **Clock within five minutes** | Kerberos refuses a ticket outside its skew, and the error does not say so in those words |

@@ -387,6 +387,11 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 		read = len(addresses)
 	}
 
+	// Counted across the sample, because what matters for the paragraph at the
+	// end is whether ANY client record came back -- one scope being empty is
+	// ordinary, and every scope being empty is what leaves the parse unproven.
+	observed := 0
+
 	fmt.Printf("reading leases from %d of %d scope(s), as a sample:\n", read, len(addresses))
 	for _, address := range addresses[:read] {
 		leases, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
@@ -394,7 +399,22 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 			SubnetAddress:    address,
 			PreferredMaximum: 0xFFFFFFFF,
 		})
+		// ERROR_NO_MORE_ITEMS IS AN ANSWER, NOT A FAILURE TO ANSWER.
+		//
+		// The call succeeded and the scope holds no clients. Rendering that as
+		// "could not be read" is the refusal-as-empty-container defect
+		// inverted, and this direction is the worse of the two: a working read
+		// that looks broken gets investigated and wastes somebody's afternoon,
+		// and the same wording at a customer makes a genuinely empty scope look
+		// like a fault in the appliance.
+		//
+		// Seen on RVA's domain, 20 September 2026: 10.10.10.0 had no leases,
+		// and preflight reported it as unreadable.
 		if err != nil {
+			if strings.Contains(err.Error(), "ERROR_NO_MORE_ITEMS") {
+				fmt.Printf("  %-18s 0 lease(s) — the scope is empty\n", formatIPv4(address))
+				continue
+			}
 			// Per scope, because one scope refusing is a different fact from
 			// the server refusing, and the difference is what somebody acts on.
 			fmt.Printf("  %-18s could not be read: %v\n", formatIPv4(address), err)
@@ -405,10 +425,40 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 		if leases != nil && leases.ClientInfo != nil {
 			count = len(leases.ClientInfo.Clients)
 		}
-		fmt.Printf("  %-18s %d lease(s)\n", formatIPv4(address), count)
+		if count == 0 {
+			fmt.Printf("  %-18s 0 lease(s) — the scope is empty\n", formatIPv4(address))
+		} else {
+			fmt.Printf("  %-18s %d lease(s)\n", formatIPv4(address), count)
+		}
+		observed += count
 	}
 
 	fmt.Println("what is correct for this site is not something preflight can know.")
+
+	// What connecting proves, and what it does not.
+	//
+	// **The transport is proven and the PARSE is not.** Until a lease comes
+	// back, the shape of the field every device key in the portal is built on
+	// is exactly as unknown as it was before this ran: MS-DHCPM's ClientUID is
+	// a 6-byte hardware address on some servers and an 11-byte client unique
+	// id carrying a subnet prefix on others, and nothing here has seen one.
+	//
+	// Getting it wrong writes a subnet prefix into every hardware address the
+	// portal stores, which is not a visible failure -- it is a device key that
+	// matches nothing, silently, for every lease from that server.
+	//
+	// So a run that enumerated scopes and saw no clients says so in those
+	// words rather than reading as a clean bill of health.
+	if observed == 0 {
+		fmt.Println("")
+		fmt.Println("SUBNETS ENUMERATED, CLIENTS NOT YET OBSERVED.")
+		fmt.Println("  The lease path is proven to CONNECT and is not proven to PARSE.")
+		fmt.Println("  No client record came back, so the ClientUID length histogram is")
+		fmt.Println("  still unrecorded — 6-byte MAC against 11-byte client id with a")
+		fmt.Println("  subnet prefix — and that is the field every device key in the")
+		fmt.Println("  portal is built on. Put a device on one of these scopes, wait for")
+		fmt.Println("  a lease, and run this again.")
+	}
 	return nil
 }
 

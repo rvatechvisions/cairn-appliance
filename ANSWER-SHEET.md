@@ -71,37 +71,52 @@ protocol failure — go-msrpc does this, and Linux does this.
 `svc-cairn` holds `Domain Users` and `DHCP Users` and nothing else, and the
 same credential reads the same server from Windows over the network.
 
-**Two candidates, neither asserted, both one command to test.**
+### Try this first: restart the DHCP Server service
 
-**1. The DHCP service has not re-read its group SIDs.** Membership travels in
-the Kerberos ticket and preflight takes a fresh one each run — so nothing on
-the appliance needs restarting. **That is not the same as nothing needing a
-restart.** The DHCP Server service resolves the `DHCP Users` and `DHCP
-Administrators` SIDs on its own schedule, and an account added afterwards is a
-documented cause of exactly this refusal *with the membership present*.
+**This is the observed cause, not a candidate.** RVA's domain, 20 September
+2026 — `svc-cairn` in `DHCP Users`, refused with `ERROR_ACCESS_DENIED`;
+`Restart-Service DHCPServer` and nothing else changed; preflight answered and
+enumerated the scope.
 
 ```powershell
 Restart-Service DHCPServer     # on the DHCP server
 ```
 
-Re-run preflight. **If it answers, that is the cause and it belongs in the
-onboarding runbook**, because every future client hits it.
+**The DHCP Server service resolves the `DHCP Users` and `DHCP Administrators`
+SIDs on its own schedule**, so an account added afterwards is refused with the
+membership plainly present. Membership travels in the Kerberos ticket and
+preflight takes a fresh one each run, so nothing on the *appliance* needs
+restarting — which is not the same sentence.
 
-**2. `DHCP Users` may not be sufficient for the enumerate calls.** Add the
-account to `DHCP Administrators` temporarily and re-run.
+**Every client hits this**, and without the explanation it reads as a
+permissions dispute with their DHCP administrator when it is a cached SID. See
+the onboarding wording in `LAB-BUILD.md`.
+
+### If the restart does not help
+
+Then it is one of the two below, and the first is the discriminator.
+
+**The account can read DHCP and this probe cannot.** Ask the same question from
+Windows, as the same account, with `runas /netonly` — it keeps the local session
+as whoever you are and sends only the **network** request as that account, so it
+needs no logon rights anywhere. **Do not use `Invoke-Command`**: that is WinRM,
+it needs `Remote Management Users`, and its refusal is about the session rather
+than about DHCP.
 
 ```powershell
-Add-ADGroupMember -Identity "DHCP Administrators" -Members svc-cairn
-# ... re-run preflight, then ...
-Remove-ADGroupMember -Identity "DHCP Administrators" -Members svc-cairn
+runas /netonly /user:DOMAIN\svc-cairn "powershell -NoExit"
+Get-DhcpServerv4Scope -ComputerName <the DHCP server>
+netsh dhcp server \\<the DHCP server> show scope   # without the RSAT module
 ```
 
-**If that is what it takes, this is a product constraint rather than a lab
-detail.** The read-only story rests on `DHCP Users` being enough; if
-`R_DhcpEnumSubnets` needs `DHCP Administrators`, **the appliance cannot be
-read-only on DHCP** and what a district is asked to grant changes. Find out
-where being wrong is cheap, and **record the answer either way** — *`DHCP
-Users` is sufficient* is worth as much written down as the alternative.
+Answered there and refused here, and it is the probe. Refused there too, and
+the grant is genuinely insufficient **on that server**, which is a question for
+whoever administers it.
+
+**`DHCP Administrators` is NOT required and should not be granted.** It was
+tested on RVA's domain and the restart alone was sufficient. It is named here
+so that nobody adds it *to be safe*: it is a write-capable role, and granting
+it would end the appliance's read-only position on DHCP for no benefit.
 
 ## Three things to expect
 

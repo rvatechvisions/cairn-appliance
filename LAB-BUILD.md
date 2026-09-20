@@ -238,6 +238,40 @@ Add-ADGroupMember -Identity "DHCP Users" -Members "svc-cairn"
 the directory and the DNS zones. Nothing else is added and nothing else is
 needed.
 
+**`DHCP Administrators` is not required. Do not grant it.** It was tested on
+RVA's own domain on 20 September 2026 and `DHCP Users` was sufficient once the
+service had re-read its groups — see below. It is named here because the
+refusal that comes next is the kind that invites somebody to add a wider role
+*to be safe*, and that one is write-capable: granting it would end this
+appliance's read-only position on DHCP for no benefit at all.
+
+### The membership takes effect when the DHCP service next restarts
+
+**Say this to the client when the account is created, not after they hit it.**
+
+> Create the service account and add it to `DHCP Users`. It takes effect the
+> next time the DHCP Server service restarts. **If you patch on a cycle, the
+> next patch window is enough** — no separate change is needed. To have it work
+> immediately, restart the DHCP Server service.
+
+**The DHCP Server service resolves the `DHCP Users` and `DHCP Administrators`
+SIDs on its own schedule.** An account added afterwards is refused with
+`ERROR_ACCESS_DENIED` while the membership sits plainly in the directory — so
+without this sentence it reads as a permissions dispute with the client's DHCP
+administrator when it is a cached SID.
+
+**Observed here, with the evidence, because it was believed without any until
+now.** On RVA's domain: `svc-cairn` in `DHCP Users`, preflight refused with
+`ERROR_ACCESS_DENIED`; `Restart-Service DHCPServer` and nothing else changed;
+preflight answered and enumerated the scope.
+
+**Where that restart is not a small thing, say so rather than asking for it
+quietly.** At Floyd the DHCP server is a production domain controller holding
+3,405 leases. The restart takes seconds and the lease database survives it —
+but it is a service restart on a DC, and it gets announced rather than done
+mid-install. The patch-window wording above exists so that it usually does not
+have to be asked for at all.
+
 ### Verify it, because this is the claim the whole design rests on
 
 ```powershell

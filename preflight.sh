@@ -836,34 +836,56 @@ capability_dhcp() {
   fi
 
   local binary="${HERE}/preflight/preflight"
-  if [ ! -x "$binary" ]; then
-    say "building the DHCP probe..."
 
-    # `go mod tidy` before `go build`, because go.mod deliberately pins
-    # nothing: the require line and the checksums are written from the imports
-    # on first build, which is the only way a version here is read rather than
-    # recalled. Without this, `go build` refuses with "missing go.sum entry"
-    # for every import -- five errors naming packages that are all correct.
-    #
-    # It needs the network once. Its failure is reported on its own, because
-    # "could not reach the module proxy" and "the code does not compile" are
-    # different facts and only the second is about this repository.
-    if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
-      say "REFUSED: could not resolve the probe's dependencies."
-      say "  This needs outbound network access to the Go module proxy, once."
-      say "  It is not a failure of the domain or of this host's credentials."
-      REFUSED=$((REFUSED + 1))
-      return 1
-    fi
+  # ALWAYS BUILD. The previous version built only when the binary was absent,
+  # and that is how a run reports on code it did not execute.
+  #
+  # On 20 September 2026 a credential fix was written, committed, pulled onto
+  # the appliance and run -- and the run used the binary left behind by the
+  # hour before, because the file still existed. It produced the identical
+  # refusal, which read as the fix not working when the fix had never been
+  # compiled. Nothing in the output said the probe was stale, and the one line
+  # that would have given it away was the BUILDING line not being printed:
+  # an absence, which is the hardest thing to notice.
+  #
+  # That is *committed is not shipped* at the smallest scale. Go's build cache
+  # makes a rebuild with no changes almost free, so the guard was saving
+  # nothing and costing the ability to trust the result.
+  say "building the DHCP probe..."
 
-    if ! (cd "${HERE}/preflight" && go build -o preflight . 2>&1 | sed 's/^/  /'); then
-      say "REFUSED: the probe's dependencies resolved and it did not compile."
-      say "  That is this repository's problem rather than the host's: the probe"
-      say "  has never been built, so the names it calls are unverified."
-      REFUSED=$((REFUSED + 1))
-      return 1
-    fi
+  # `go mod tidy` before `go build`, because go.mod deliberately pins
+  # nothing: the require line and the checksums are written from the imports
+  # on first build, which is the only way a version here is read rather than
+  # recalled. Without this, `go build` refuses with "missing go.sum entry"
+  # for every import -- five errors naming packages that are all correct.
+  #
+  # It needs the network once. Its failure is reported on its own, because
+  # "could not reach the module proxy" and "the code does not compile" are
+  # different facts and only the second is about this repository.
+  if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
+    say "REFUSED: could not resolve the probe's dependencies."
+    say "  This needs outbound network access to the Go module proxy, once."
+    say "  It is not a failure of the domain or of this host's credentials."
+    REFUSED=$((REFUSED + 1))
+    return 1
   fi
+
+  if ! (cd "${HERE}/preflight" && go build -o preflight . 2>&1 | sed 's/^/  /'); then
+    say "REFUSED: the probe's dependencies resolved and it did not compile."
+    say "  That is this repository's problem rather than the host's."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  # Read the artifact rather than assuming the build produced one.
+  if [ ! -x "$binary" ]; then
+    say "REFUSED: the build reported success and there is no binary at"
+    say "  ${binary}. Nothing was asked of any DHCP server."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  say "  built: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'timestamp unreadable')"
 
   # Each server asked and answered on its own. A site with six DHCP servers
   # where one refuses is a different fact from a site with five servers, and

@@ -28,7 +28,11 @@ preflight or the credential does not survive into the elevated environment.
 ./bootstrap.sh                             # installs, creates /etc/cairn-appliance (700)
 vi /etc/cairn-appliance/settings.env       # realm UPPER CASE, hosts lower
 ./enroll.sh                                # keypair generated here, never transmitted
-read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD   # lab only
+set +H
+read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
+echo
+export CAIRN_PASSWORD
+echo "${#CAIRN_PASSWORD} characters captured"
 ./preflight.sh
 ```
 

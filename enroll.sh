@@ -30,7 +30,12 @@ set -uo pipefail
 
 CONFIG_DIR=/etc/cairn-appliance
 KEY="${CONFIG_DIR}/appliance.key"
-PUB="${CONFIG_DIR}/appliance.pub"
+
+# ssh-keygen decides this name, not us: it writes the public half to the
+# private half's path with .pub appended. Naming it independently is how the
+# first version came to chmod, chown and cat a file that was never created --
+# and then print the paths of both keys as though both existed.
+PUB="${KEY}.pub"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "This must run as root: it writes to ${CONFIG_DIR}."
@@ -51,7 +56,12 @@ if [ -f "$KEY" ]; then
   echo
   echo "To replace it, revoke this appliance in the portal, delete both files"
   echo "below, and run this again."
-  ls -l "$KEY" "$PUB" 2>/dev/null
+
+  # The error stream is kept rather than discarded. A missing public half is
+  # exactly the state the first version of this script produced, and sending
+  # the complaint to the null device would print a list with one entry and let
+  # it read as a complete pair.
+  ls -l "$KEY" "$PUB"
   exit 0
 fi
 
@@ -65,9 +75,27 @@ if ! ssh-keygen -t ed25519 -N '' -C "cairn-appliance@$(hostname)" -f "$KEY" >/de
   exit 1
 fi
 
-chmod 600 "$KEY"
-chmod 644 "$PUB"
-chown root:root "$KEY" "$PUB"
+# Read the outcome rather than reporting the attempt.
+#
+# The first version ran these three unchecked and then printed both key paths
+# and a success block, on a run where the public half did not exist under the
+# name it was looking for. Every line of that output was a claim nothing had
+# verified -- which is the failure this project already names, arriving inside
+# the script whose whole job is to produce one artifact.
+for required in "$KEY" "$PUB"; do
+  if [ ! -f "$required" ]; then
+    echo "FAILED: ssh-keygen reported success and ${required} is not there."
+    echo "  Nothing was enrolled. Do not treat this appliance as having a key."
+    exit 1
+  fi
+done
+
+if ! chmod 600 "$KEY" || ! chmod 644 "$PUB" || ! chown root:root "$KEY" "$PUB"; then
+  echo "FAILED: the keys were generated and could not be secured."
+  echo "  ${KEY} may be readable by somebody other than root. Check it, remove"
+  echo "  both files, and run this again rather than leaving them in place."
+  exit 1
+fi
 
 echo
 echo "=== the public half, which is what the portal needs ==="

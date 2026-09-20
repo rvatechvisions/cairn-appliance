@@ -267,7 +267,11 @@ not there.
 you type the password into the appliance's shell:
 
 ```bash
-read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
+set +H
+read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
+echo
+export CAIRN_PASSWORD
+echo "${#CAIRN_PASSWORD} characters captured"
 ```
 
 `read -rs` does not echo and keeps it out of shell history. It lives in one
@@ -345,7 +349,11 @@ never leaves the box. Since the portal side does not exist, it says so rather
 than implying it registered.
 
 ```bash
-read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
+set +H
+read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
+echo
+export CAIRN_PASSWORD
+echo "${#CAIRN_PASSWORD} characters captured"
 ./preflight.sh
 ```
 

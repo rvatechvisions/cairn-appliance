@@ -242,7 +242,11 @@ It generates the keypair here and prints the public half. **The portal side of
 enrolment is not built**, so it says so rather than implying it registered.
 
 ```
-read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
+set +H
+read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
+echo
+export CAIRN_PASSWORD
+echo "${#CAIRN_PASSWORD} characters captured"
 ./preflight.sh
 ```
 

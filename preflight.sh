@@ -905,7 +905,18 @@ capability_dhcp() {
     # plainly it was named. KRB5CCNAME reaches the probe only because it was
     # separately exported for kinit. Naming it on the command that needs it
     # keeps the reason visible at the place it matters.
-    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" 2>&1 | sed 's/^/  /'; then
+    # CAIRN_PROBE_ARGS reaches the probe unquoted, deliberately, so a caller
+    # can pass more than one flag:
+    #
+    #   CAIRN_PROBE_ARGS="-debug" ./preflight.sh
+    #   CAIRN_PROBE_ARGS="-transport ncacn_np:" ./preflight.sh
+    #
+    # It exists because the alternative is running the binary by hand, and the
+    # ticket it needs lives in a tmpfs cache this script deletes on exit --
+    # so by the time somebody has a shell to run it from, the credential is
+    # gone. A diagnostic flag nobody can reach is a flag that does not exist.
+    # shellcheck disable=SC2086
+    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" ${CAIRN_PROBE_ARGS:-} 2>&1 | sed 's/^/  /'; then
       any_found=1
     else
       # "Refused" rather than "did not answer", because they are different

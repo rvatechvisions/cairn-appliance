@@ -52,6 +52,11 @@ import (
 	"github.com/oiweiwei/go-msrpc/ssp"
 	"github.com/oiweiwei/go-msrpc/ssp/gssapi"
 
+	// Only reached under -debug. go-msrpc's own examples log through zerolog,
+	// so this is the logger its option expects rather than a wrapper written
+	// to fit.
+	"github.com/rs/zerolog"
+
 	// MS-DHCPM is TWO RPC interfaces, and the calls this probe makes are split
 	// across them: R_DhcpEnumSubnets is on DHCPSRV, R_DhcpEnumSubnetClientsV5
 	// is on DHCPSRV2. So two imports and two clients over one connection.
@@ -103,6 +108,19 @@ func main() {
 	server := flag.String("server", "", "the DHCP server to ask, by name")
 	scopes := flag.Int("scopes", 3, "how many scopes to read leases from, for the probe")
 	timeout := flag.Duration("timeout", 30*time.Second, "how long to wait for the server")
+
+	// Two flags that exist to answer a question rather than to configure
+	// anything, and they are here because guessing at the answer has already
+	// cost several runs.
+	//
+	// On 20 September 2026 the same account read this same server perfectly
+	// well from Windows -- Get-DhcpServerv4Scope and netsh both returned the
+	// scope -- while this probe was refused ERROR_ACCESS_DENIED. So the grant
+	// is sufficient and something about HOW this asks differs from how Windows
+	// asks. These make the difference observable instead of theorised.
+	debug := flag.Bool("debug", false, "log the RPC exchange, including the security negotiation")
+	transport := flag.String("transport", "ncacn_ip_tcp:",
+		"the RPC transport to request; Windows tools commonly use ncacn_np:")
 	flag.Parse()
 
 	if *server == "" {
@@ -113,7 +131,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	if err := run(ctx, *server, *scopes); err != nil {
+	if err := run(ctx, *server, *scopes, *transport, *debug); err != nil {
 		// The reason, in full. A probe that reports "failed" teaches nobody
 		// which of the four things it depends on was the one that broke.
 		fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
@@ -174,7 +192,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, server string, scopeLimit int) error {
+func run(ctx context.Context, server string, scopeLimit int, transport string, debug bool) error {
 	// The ticket preflight.sh already holds, handed to the RPC layer.
 	//
 	// `gssapi.NewSecurityContext` alone establishes a context with no
@@ -229,7 +247,19 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 	// The options below belong on the CLIENTS rather than on the connection:
 	// the connection is how you reach the mapper, and each client then says
 	// which interface it wants and over what transport.
-	conn, err := dcerpc.Dial(ctx, server, epm.EndpointMapper(ctx, server))
+	// The logger goes on the dial AND on the clients, because the security
+	// negotiation this is meant to expose happens on the client bind rather
+	// than on the connection.
+	var logging []dcerpc.Option
+	if debug {
+		logging = append(logging, dcerpc.WithLogger(zerolog.New(os.Stderr)))
+	}
+
+	mapperOptions := make([]dcerpc.Option, len(logging))
+	copy(mapperOptions, logging)
+
+	conn, err := dcerpc.Dial(ctx, server,
+		append([]dcerpc.Option{epm.EndpointMapper(ctx, server, mapperOptions...)}, logging...)...)
 	if err != nil {
 		return fmt.Errorf("dialling %s through the endpoint mapper: %w", server, err)
 	}
@@ -243,12 +273,14 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 	// which kvno confirmed exists on this domain rather than being assumed:
 	// the DHCP service runs as the machine account, so its ticket is the
 	// host one rather than a dhcp-specific principal.
-	options := []dcerpc.Option{
+	options := append([]dcerpc.Option{
 		dcerpc.WithSeal(),
 		dcerpc.WithMechanism(ssp.KRB5),
-		dcerpc.WithEndpoint("ncacn_ip_tcp:"),
+		dcerpc.WithEndpoint(transport),
 		dcerpc.WithTargetName("host/" + server),
-	}
+	}, logging...)
+
+	fmt.Printf("transport: %s, sealed, Kerberos, target host/%s\n", transport, server)
 
 	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn, options...)
 	if err != nil {

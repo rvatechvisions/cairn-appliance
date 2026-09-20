@@ -87,9 +87,47 @@ for found in "$CONFIG_DIR"/*.keytab "$CONFIG_DIR"/*.kt /etc/krb5.keytab; do
   DURABLE=1
 done
 
-if grep -qiE '^[[:space:]]*(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)=..*' "$SETTINGS" 2>/dev/null; then
-  say "FOUND A PASSWORD in ${SETTINGS}"
-  DURABLE=1
+# The places a password actually gets parked, not just the settings file.
+#
+# This checked $SETTINGS alone and then printed "no keytab, no stored password.
+# Nothing here outlives a run" -- a claim about the whole box from a look at one
+# file. The gap is not hypothetical: the obvious way to make an unattended daily
+# run work is a systemd EnvironmentFile or a cron wrapper carrying
+# CAIRN_PASSWORD, and NONE of those were looked at while the line still printed.
+#
+# A scan is only ever evidence about what it walks, so the reach is now named in
+# the output rather than implied by it. What it still cannot see is stated below
+# rather than left for somebody to discover: an environment variable exported
+# from a parent process leaves no file to find, and this list is the common
+# places rather than every place.
+PASSWORD_HOMES="
+${SETTINGS}
+${CONFIG_DIR}/environment
+/etc/environment
+/etc/default/cairn-appliance
+/root/.bashrc
+/root/.profile
+/etc/cron.d/cairn-appliance
+/var/spool/cron/crontabs/root
+"
+
+for home in $PASSWORD_HOMES; do
+  [ -f "$home" ] || continue
+  if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)=..*' "$home" 2>/dev/null; then
+    say "FOUND A PASSWORD in ${home}"
+    DURABLE=1
+  fi
+done
+
+# systemd units are the other obvious home, and they are found rather than
+# listed: an EnvironmentFile= line pointing anywhere at all is worth seeing.
+if [ -d /etc/systemd/system ]; then
+  for unit in $(grep -rlE 'cairn|preflight' /etc/systemd/system 2>/dev/null); do
+    if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)|EnvironmentFile' "$unit" 2>/dev/null; then
+      say "A SYSTEMD UNIT MAY CARRY A CREDENTIAL: ${unit}"
+      DURABLE=1
+    fi
+  done
 fi
 
 if [ "$DURABLE" -ne 0 ]; then
@@ -105,7 +143,12 @@ if [ "$DURABLE" -ne 0 ]; then
   exit 1
 fi
 
-say "no keytab, no stored password. Nothing here outlives a run."
+# The claim is the size of the look, which it was not before.
+say "no keytab, and no password in the places this looked:"
+say "  ${SETTINGS}, /etc/environment, /etc/default, root's shell profiles,"
+say "  root's crontab, /etc/cron.d, and any systemd unit naming cairn."
+say "  It cannot see a variable exported by whatever started this run, so"
+say "  'nothing outlives a run' is true of the disk rather than of everything."
 
 # ---------------------------------------------------------------------------
 # 0. Where does the credential come from, and does it survive the run?

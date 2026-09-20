@@ -1,0 +1,26 @@
+# Credentials, first and before anything else in this repository exists.
+#
+# The keytab is the appliance's entire identity: anybody holding it can
+# authenticate to the domain as the service account without a password and
+# without being prompted. It lives at /etc/cairn-appliance/cairn.keytab on the
+# appliance, mode 600, and it must never be anywhere else.
+#
+# This file was written before the first commit rather than after the first
+# mistake. A credential that reaches a repository is not removed by deleting
+# it: it is in the history, and the remedy is rotation at the domain rather
+# than a commit here.
+*.keytab
+*.kt
+krb5.conf.local
+/etc/
+secrets/
+.env
+
+# What preflight writes when somebody asks it to keep a record. It contains a
+# customer's host names and addresses, which is theirs rather than ours.
+*.preflight.json
+preflight-*.txt
+
+# Go build output.
+/preflight/preflight
+/preflight/preflight.exe

@@ -119,6 +119,7 @@ func main() {
 	// is sufficient and something about HOW this asks differs from how Windows
 	// asks. These make the difference observable instead of theorised.
 	debug := flag.Bool("debug", false, "log the RPC exchange, including the security negotiation")
+	target := flag.String("target", "", "the service principal to request; default follows the transport")
 	transport := flag.String("transport", "ncacn_ip_tcp:",
 		"the RPC transport to request; Windows tools commonly use ncacn_np:")
 	flag.Parse()
@@ -131,7 +132,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	if err := run(ctx, *server, *scopes, *transport, *debug); err != nil {
+	if err := run(ctx, *server, *scopes, *transport, *target, *debug); err != nil {
 		// The reason, in full. A probe that reports "failed" teaches nobody
 		// which of the four things it depends on was the one that broke.
 		fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
@@ -192,7 +193,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, server string, scopeLimit int, transport string, debug bool) error {
+func run(ctx context.Context, server string, scopeLimit int, transport, targetName string, debug bool) error {
 	// The ticket preflight.sh already holds, handed to the RPC layer.
 	//
 	// `gssapi.NewSecurityContext` alone establishes a context with no
@@ -273,14 +274,35 @@ func run(ctx context.Context, server string, scopeLimit int, transport string, d
 	// which kvno confirmed exists on this domain rather than being assumed:
 	// the DHCP service runs as the machine account, so its ticket is the
 	// host one rather than a dhcp-specific principal.
+	// The service principal follows the TRANSPORT, not the service.
+	//
+	// ncacn_np is RPC over a named pipe, which is RPC over SMB -- so the
+	// ticket that has to be obtained is the file-service one, cifs/<host>.
+	// Asking for host/<host> over a named pipe produces
+	// KDC_ERR_S_PRINCIPAL_UNKNOWN from inside "open smb session", which reads
+	// as the server being unknown when the server is fine and the principal
+	// was the wrong one for that path. Seen on the appliance, 20 September
+	// 2026, with the previous hardcoded host/ target.
+	//
+	// Both principals were confirmed to exist on this domain by kvno earlier
+	// the same evening, so neither is a guess about what a DC registers.
+	target := targetName
+	if target == "" {
+		if strings.HasPrefix(transport, "ncacn_np") {
+			target = "cifs/" + server
+		} else {
+			target = "host/" + server
+		}
+	}
+
 	options := append([]dcerpc.Option{
 		dcerpc.WithSeal(),
 		dcerpc.WithMechanism(ssp.KRB5),
 		dcerpc.WithEndpoint(transport),
-		dcerpc.WithTargetName("host/" + server),
+		dcerpc.WithTargetName(target),
 	}, logging...)
 
-	fmt.Printf("transport: %s, sealed, Kerberos, target host/%s\n", transport, server)
+	fmt.Printf("transport: %s, sealed, Kerberos, target %s\n", transport, target)
 
 	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn, options...)
 	if err != nil {

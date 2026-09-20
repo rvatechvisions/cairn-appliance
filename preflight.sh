@@ -908,7 +908,14 @@ capability_dhcp() {
     if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" 2>&1 | sed 's/^/  /'; then
       any_found=1
     else
-      say "  this server did not answer. The others are still being asked."
+      # "Refused" rather than "did not answer", because they are different
+      # facts and this script spends its whole output insisting on that.
+      #
+      # ERROR_ACCESS_DENIED from R_DhcpEnumSubnets is the server ANSWERING: the
+      # mapper resolved, the interface bound, Kerberos authenticated and the
+      # call was dispatched. Calling that silence would report a working DHCP
+      # service as unreachable and send somebody to look at the network.
+      say "  this server refused. The others are still being asked."
     fi
   done
 

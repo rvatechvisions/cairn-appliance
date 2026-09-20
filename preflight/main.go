@@ -117,6 +117,34 @@ func main() {
 		// The reason, in full. A probe that reports "failed" teaches nobody
 		// which of the four things it depends on was the one that broke.
 		fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
+
+		// Name the grant when the server names the grant.
+		//
+		// ERROR_ACCESS_DENIED here is the DHCP service ANSWERING, after the
+		// mapper resolved, the interface bound and Kerberos authenticated. It
+		// is a decision about what this account may read, and the whole of the
+		// answer is one group -- so saying so beats leaving a Win32 code to be
+		// looked up. It arrives at the end of a long run where every earlier
+		// layer looks fine, which is exactly when a bare code reads as
+		// something being broken.
+		if strings.Contains(err.Error(), "ERROR_ACCESS_DENIED") {
+			fmt.Fprintf(os.Stderr, "\n"+
+				"  THE SERVER ANSWERED. Everything below this is working: the endpoint\n"+
+				"  mapper resolved, the interface bound, Kerberos authenticated, and the\n"+
+				"  call was dispatched. What it refused is the READ.\n"+
+				"\n"+
+				"  MS-DHCPM reads need membership of DHCP Users, which is read-only on\n"+
+				"  the DHCP service and is the whole grant this appliance asks for. On a\n"+
+				"  domain controller:\n"+
+				"\n"+
+				"    Get-ADPrincipalGroupMembership %s | Select-Object Name\n"+
+				"    Add-ADGroupMember -Identity \"DHCP Users\" -Members %s\n"+
+				"\n"+
+				"  Membership travels in the Kerberos ticket, and preflight takes a fresh\n"+
+				"  one each run -- so add it and run again. Nothing here needs changing.\n",
+				accountName(os.Getenv("CAIRN_PRINCIPAL")),
+				accountName(os.Getenv("CAIRN_PRINCIPAL")))
+		}
 		os.Exit(1)
 	}
 }
@@ -268,6 +296,19 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 
 	fmt.Println("what is correct for this site is not something preflight can know.")
 	return nil
+}
+
+// accountName strips the realm from a principal, because Add-ADGroupMember
+// wants the account and not the Kerberos name. A command printed for somebody
+// to paste has to be the command, not a shape they finish themselves.
+func accountName(principal string) string {
+	if principal == "" {
+		return "svc-cairn"
+	}
+	if at := strings.IndexByte(principal, '@'); at > 0 {
+		return principal[:at]
+	}
+	return principal
 }
 
 // formatIPv4 renders a scope address the way a person reads it. MS-DHCPM

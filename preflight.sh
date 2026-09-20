@@ -876,7 +876,14 @@ capability_dhcp() {
 
     say ""
     say "asking ${server}:"
-    if "$binary" -server "$server" 2>&1 | sed 's/^/  /'; then
+    # CAIRN_PRINCIPAL is passed explicitly rather than exported globally.
+    #
+    # settings.env is read with `.`, which makes its names shell variables and
+    # NOT environment variables, so the probe would not have seen it however
+    # plainly it was named. KRB5CCNAME reaches the probe only because it was
+    # separately exported for kinit. Naming it on the command that needs it
+    # keeps the reason visible at the place it matters.
+    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" 2>&1 | sed 's/^/  /'; then
       any_found=1
     else
       say "  this server did not answer. The others are still being asked."

@@ -87,9 +87,15 @@ see two of either, fix that before going further.
 Then check the domain resolves and the clock is close:
 
 ```bash
-getent hosts <dc-hostname>
+getent hosts DC_HOSTNAME
 timedatectl status
 ```
+
+**Placeholders in this guide are bare uppercase words, and that is deliberate.**
+`<dc-hostname>` reads as a placeholder and parses as a *redirection* — in bash
+it is a syntax error about an unexpected token, and in PowerShell it is an
+error about the `<` operator being reserved. Either way the message is about
+redirection and says nothing about the thing you were meant to substitute.
 
 Kerberos refuses any request more than five minutes from the KDC, and the error
 it gives says nothing about clocks.
@@ -114,18 +120,35 @@ on a machine whose whole argument is that it has none.
 It is also 73 KB of shell scripts that are already on the machine you are
 sitting at.
 
-**On the workstation**, in Git Bash:
+**On the workstation. Both shells are given, because this machine has two and
+the commands are not interchangeable** — `/tmp` is not a path in PowerShell and
+`sha256sum` is not a command there.
+
+PowerShell:
+
+```powershell
+cd C:\dev\cairn-appliance
+git archive --format=tar.gz -o C:\dev\cairn-appliance.tgz HEAD
+Get-FileHash C:\dev\cairn-appliance.tgz -Algorithm SHA256
+scp C:\dev\cairn-appliance.tgz VM_USER@VM_ADDRESS:/tmp/
+```
+
+Git Bash:
 
 ```bash
 cd /c/dev/cairn-appliance
-git archive --format=tar.gz -o /tmp/cairn-appliance.tgz HEAD
-sha256sum /tmp/cairn-appliance.tgz
-scp /tmp/cairn-appliance.tgz <you>@<vm-address>:/tmp/
+git archive --format=tar.gz -o /c/dev/cairn-appliance.tgz HEAD
+sha256sum /c/dev/cairn-appliance.tgz
+scp /c/dev/cairn-appliance.tgz VM_USER@VM_ADDRESS:/tmp/
 ```
 
 `git archive` takes the tracked files at `HEAD` and nothing else — no `.git`,
 no scratch files — and writes the bytes the index holds, which is what keeps
 the line-ending check below true.
+
+**`Get-FileHash` prints uppercase and `sha256sum` prints lowercase.** It is the
+same hash. Compare them without regard to case, or a good copy reads as a
+corrupt one.
 
 **On the VM:**
 
@@ -186,7 +209,7 @@ On a domain-joined Windows machine, PowerShell as a Domain Admin:
 
 ```powershell
 New-ADUser -Name "svc-cairn" -SamAccountName "svc-cairn" `
-  -UserPrincipalName "svc-cairn@<your-domain>" `
+  -UserPrincipalName "svc-cairn@YOUR_DOMAIN" `
   -AccountPassword (Read-Host -AsSecureString "Password for svc-cairn") `
   -PasswordNeverExpires $true -CannotChangePassword $true -Enabled $true
 

@@ -915,7 +915,13 @@ capability_dhcp() {
 
   if ! (cd "${HERE}/preflight" && go build -o preflight . 2>&1 | sed 's/^/  /'); then
     say "REFUSED: the probe's dependencies resolved and it did not compile."
-    say "  That is this repository's problem rather than the host's."
+    say ""
+    say "  THIS IS THE CODE, NOT THIS HOST. The probe compiled and ran on this"
+    say "  appliance on 20 September 2026, so the toolchain, the module cache"
+    say "  and the network are all known to work here. A compile failure now is"
+    say "  a change made since then, and the compiler names it above."
+    say ""
+    say "  Nothing about the domain, the account or the credential is implicated."
     REFUSED=$((REFUSED + 1))
     return 1
   fi

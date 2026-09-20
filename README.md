@@ -41,8 +41,18 @@ and the domain join that was briefly proposed to fix it.**
 
 - The customer enters a read-only service credential **into the portal**.
 - This appliance connects **out** to the portal and fetches it at run time.
-- It `kinit`s into a **memory-backed** credential cache — `KRB5CCNAME=MEMORY:`
-  — uses it, and drops it. **Nothing durable on the box.**
+- It `kinit`s into a **memory-backed** credential cache — a private directory
+  on `tmpfs`, removed when the run ends — uses it, and drops it. **Nothing
+  durable on the box.**
+
+  > This was `KRB5CCNAME=MEMORY:` until 20 September 2026, and that **did not
+  > work**, in a way that looked like working. An MIT `MEMORY:` cache lives in
+  > the address space of the process that made it, so `kinit` exited 0 and took
+  > the ticket with it; every later process inherited a variable naming a cache
+  > that was gone. `tmpfs` is still RAM and still never touches persistent
+  > storage — what it adds is that a second process can read it, which is what
+  > was actually needed. The claim is narrowed rather than defended: the ticket
+  > exists only in RAM, only for the run, in a directory only root can enter.
 - **Revocation is one action in the portal**, not a site visit.
 - **We never handle the customer's credential** — not in a ticket, not in a
   message, not in a file we place. That rule has stood all week on discipline;

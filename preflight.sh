@@ -243,24 +243,83 @@ capability_kerberos() {
       ;;
   esac
 
-  # A MEMORY-backed ticket cache, which is the whole design in one line.
+  # A ticket cache in RAM that OTHER PROCESSES CAN ALSO READ.
   #
-  # It lives in this process and its children and is gone when the script
-  # exits: there is no file to forget, none to back up, and nothing for the
-  # next person with a shell on this box to read. A FILE: cache under /tmp
-  # would work identically and would leave a usable ticket on disk, which is
-  # the property this design exists to remove.
-  export KRB5CCNAME="MEMORY:cairn-preflight"
+  # This was `MEMORY:cairn-preflight` and it did not work, in a way that looked
+  # exactly like working. **An MIT `MEMORY:` cache lives in the address space of
+  # the process that created it.** kinit made one, put a real ticket in it, exited
+  # 0 -- and the cache went with it. Every later process inherited the variable
+  # naming a cache that no longer existed, so ldapsearch reported *No Kerberos
+  # credentials available (default cache: MEMORY:cairn-preflight)* and read as a
+  # permissions problem in somebody's directory.
+  #
+  # `/dev/shm` is tmpfs: RAM, never written to persistent storage, cleared on
+  # reboot. A file there is readable by processes rather than by one process,
+  # which is the property that was actually needed, and the directory is private
+  # and removed on exit below.
+  #
+  # **The claim is narrowed rather than defended.** It is no longer "nothing is
+  # ever written down" -- it is "the ticket exists only in RAM, only for this
+  # run, in a directory only root can enter, and it is removed when this script
+  # ends." Root can read another process's memory anyway, so against the
+  # attacker who matters this is the same guarantee; against the disk it is
+  # identical. Saying "MEMORY:" while leaving the capability broken was the
+  # worse of the two.
+  if [ ! -d /dev/shm ]; then
+    say "NOT ASKED: no /dev/shm on this host, so there is nowhere to hold a"
+    say "  ticket in RAM. This refuses rather than falling back to disk: a"
+    say "  ticket under /tmp would survive this run and outlive the reason for"
+    say "  it, which is the one thing this design exists to prevent."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  CCDIR="$(mktemp -d /dev/shm/cairn-preflight.XXXXXX)" || {
+    say "NOT ASKED: could not create a private cache directory in /dev/shm."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  }
+  # Armed before anything else can fail, and not three lines later: a cleanup
+  # installed after the next command is a directory that leaks whenever that
+  # command is the one that breaks. It covers an interrupt too, because a
+  # cleanup that only runs on the happy path is one that does not run on the
+  # day it matters.
+  trap 'rm -rf "$CCDIR"' EXIT INT TERM
+
+  chmod 700 "$CCDIR"
+  export KRB5CCNAME="FILE:${CCDIR}/ccache"
 
   # Piped into kinit rather than passed as an argument: a password on a command
   # line is visible in `ps` to every user on the host for as long as the call
   # takes, which is a disclosure to anybody watching.
   if printf '%s' "$CAIRN_PASSWORD" | kinit "$PRINCIPAL" 2>&1 | sed 's/^/  /'; then
-    say "FOUND: a ticket was issued for ${PRINCIPAL}"
-    say "  cache: ${KRB5CCNAME} — in memory, and gone when this script exits."
-    klist 2>/dev/null | sed 's/^/  /'
-    FOUND=$((FOUND + 1))
-    return 0
+
+    # Read the cache rather than trusting the exit status.
+    #
+    # kinit returned 0 for two whole runs while leaving nothing any later
+    # process could use, and this line is why nobody saw it: klist's error
+    # stream went to the null device, so an empty cache printed exactly what a
+    # full one would have printed on a quiet day -- nothing. Absence of output
+    # read as absence of a problem.
+    local tickets
+    tickets="$(klist 2>&1)"
+    case "$tickets" in
+      *"$PRINCIPAL"*)
+        say "FOUND: a ticket was issued for ${PRINCIPAL} and is readable."
+        say "  cache: ${KRB5CCNAME}"
+        say "  in RAM (tmpfs), private to root, removed when this script ends."
+        printf '%s\n' "$tickets" | sed 's/^/  /'
+        FOUND=$((FOUND + 1))
+        return 0
+        ;;
+    esac
+
+    say "REFUSED: kinit reported success and the cache holds no usable ticket."
+    say "  This is not a refusal by the domain -- the request was accepted."
+    say "  What klist says about ${KRB5CCNAME}:"
+    printf '%s\n' "$tickets" | sed 's/^/  /'
+    REFUSED=$((REFUSED + 1))
+    return 1
   fi
 
   say "REFUSED: no ticket. The account, the password or the clock is the cause."

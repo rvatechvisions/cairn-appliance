@@ -217,6 +217,12 @@ should still end up with Kerberos and LDAP working, and you should be told
 exactly which piece is missing rather than being left with a half-prepared
 machine.
 
+**`settings.env` does not ship in this repository**, so it will not be in a
+clone. `bootstrap.sh` writes it and leaves an existing one alone. It is absent
+by design: the filled-in file names a customer's domain controllers and service
+account, and a template carried here is the file somebody eventually fills in
+and commits.
+
 Then fill in `/etc/cairn-appliance/settings.env` — realm in **upper case**,
 host names in lower — and give this appliance its identity:
 

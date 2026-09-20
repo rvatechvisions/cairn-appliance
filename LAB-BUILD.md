@@ -287,19 +287,31 @@ interfaces. **It contacts no domain.** It is idempotent, and a failing step
 does not stop the ones after it — read the summary at the end rather than the
 first error.
 
-Fill in the settings:
+**`settings.env` is not in the repository and you will not find it in the
+clone.** `bootstrap.sh` writes it, at `/etc/cairn-appliance/settings.env`, mode
+600, and leaves an existing one alone. It is not there beforehand because the
+filled-in version names a customer's domain controllers and service account,
+and a template in the repository is the file somebody eventually fills in and
+commits.
+
+Fill it in:
 
 ```bash
 sudo nano /etc/cairn-appliance/settings.env
 ```
 
 ```
-CAIRN_REALM=<YOUR-DOMAIN-IN-UPPER-CASE>
-CAIRN_DC=<dc-hostname.your-domain>
-CAIRN_PRINCIPAL=svc-cairn@<YOUR-DOMAIN-IN-UPPER-CASE>
-CAIRN_DHCP_SERVERS=<dhcp-hostname.your-domain>
+CAIRN_REALM=EXAMPLE.LOCAL
+CAIRN_DC=dc01.example.local
+CAIRN_PRINCIPAL=svc-cairn@EXAMPLE.LOCAL
+CAIRN_DHCP_SERVERS=dc01.example.local
 CAIRN_PORTAL=
 ```
+
+**Those are example values to replace, not placeholders to fill in, and the
+difference matters here.** This file is *sourced* by `preflight.sh`, so a
+leftover `<your-domain>` is a shell redirection: the run dies on a syntax error
+that names none of the five settings above.
 
 **The realm is upper case and host names are lower case.** Kerberos treats the
 realm as case-sensitive, and this is the single most common reason step 1 fails

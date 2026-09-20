@@ -21,20 +21,21 @@ domain, not a forest you build.
 
 **As root.** A minimal image ships no `sudo`, and `sudo ./bootstrap.sh` there
 fails with *command not found* — which reads as the script being missing rather
-than `sudo`. As a normal user, prefix each with `sudo`, and use `sudo -E` for
-preflight or the credential does not survive into the elevated environment.
+than `sudo`. As a normal user, prefix each with `sudo`, and use `sudo -E` if you
+set `CAIRN_PASSWORD` yourself, or it does not survive into the elevated
+environment.
 
 ```
 ./bootstrap.sh                             # installs, creates /etc/cairn-appliance (700)
 vi /etc/cairn-appliance/settings.env       # realm UPPER CASE, hosts lower
 ./enroll.sh                                # keypair generated here, never transmitted
-set +H
-read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
-echo
-export CAIRN_PASSWORD
-echo "${#CAIRN_PASSWORD} characters captured"
-./preflight.sh
+./preflight.sh                             # prompts for the password itself
 ```
+
+**Preflight asks for the password.** There is no variable to arrange first and
+nothing to paste. `CAIRN_PASSWORD` is still read if it is already set, for an
+unattended run; a run with neither a terminal nor the variable refuses rather
+than waiting for input nobody can supply.
 
 ## What each answer means
 

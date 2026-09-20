@@ -252,20 +252,24 @@ It generates the keypair here and prints the public half. **The portal side of
 enrolment is not built**, so it says so rather than implying it registered.
 
 ```
-set +H
-read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
-echo
-export CAIRN_PASSWORD
-echo "${#CAIRN_PASSWORD} characters captured"
 ./preflight.sh
 ```
 
-**`read -rs` rather than typing the password into the command**, so it reaches
-neither the shell history nor the process table. `CAIRN_PASSWORD` is the **lab**
-path; in production the appliance authenticates with the key `enroll.sh`
-generated, fetches the credential from the portal per run, and holds it in
-memory. There is deliberately no password in `settings.env` — preflight refuses
-to start if it finds one there.
+**It prompts for the password**, so there is no variable to arrange first and
+nothing to paste. That is not only convenience: a `read` inside a pasted block
+consumes the *next line of the paste* as the password, hands the KDC a word
+nobody typed, and earns a failed-logon event against the account for it.
+
+The value is read without echo and held in preflight's own process rather than
+in the shell's environment, where an exported variable would stay readable from
+`/proc` long after the run. `CAIRN_PASSWORD` is still honoured when it is
+already set, for an unattended run; with neither a terminal nor the variable,
+preflight refuses rather than waiting for input nobody can supply.
+
+This is the **lab** path throughout. In production the appliance authenticates
+with the key `enroll.sh` generated, fetches the credential from the portal per
+run, and holds it in memory. There is deliberately no password in
+`settings.env` — preflight refuses to start if it finds one there.
 
 ---
 

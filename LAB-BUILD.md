@@ -271,20 +271,13 @@ into and no endpoint to fetch it from. Saying so plainly matters: a guide that
 told you to enter it in the portal would have you hunting for a screen that is
 not there.
 
-**Preflight needs none of it.** It reads and submits nothing, so for this run
-you type the password into the appliance's shell:
+**Preflight needs none of it.** It reads and submits nothing, and it **asks for
+the password itself** when you run it — there is no variable to set up first.
 
-```bash
-set +H
-read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
-echo
-export CAIRN_PASSWORD
-echo "${#CAIRN_PASSWORD} characters captured"
-```
-
-`read -rs` does not echo and keeps it out of shell history. It lives in one
-environment variable and one in-memory ticket cache, and nothing writes it
-down — so the *durability* property is genuinely tested. What is **not** tested
+The password is read without echo, held in preflight's own process rather than
+in your shell's environment, and used to fill one in-memory ticket cache that
+is removed when the run ends — so the *durability* property is genuinely
+tested. What is **not** tested
 is the round trip, and what is **not** acceptable is doing this at a customer.
 
 ### What Cairn needs from you for this run: nothing
@@ -357,18 +350,19 @@ never leaves the box. Since the portal side does not exist, it says so rather
 than implying it registered.
 
 ```bash
-set +H
-read -rsp 'svc-cairn password: ' CAIRN_PASSWORD
-echo
-export CAIRN_PASSWORD
-echo "${#CAIRN_PASSWORD} characters captured"
 ./preflight.sh
 ```
 
-**`read -rs` rather than typing the password into the command**, so it reaches
-neither your shell history nor the process table. It lives in this shell's
-environment for this run and nowhere else — there is deliberately no password
-in `settings.env`, and preflight refuses to start if it finds one there.
+**It prompts for the password.** One command, nothing to arrange first and
+nothing to paste — which matters more than it sounds: a `read` in a pasted
+block consumes the *next line of the paste* as the password, so the KDC is
+handed a word nobody typed and answers *Password incorrect*. That happened here
+on 20 September 2026 and cost a real failed-logon event against the account.
+
+The value is read without echo, lives in preflight's own process rather than in
+your shell's environment, and fills one ticket cache that is removed when the
+run ends. There is deliberately no password in `settings.env`, and preflight
+refuses to start if it finds one there.
 
 `CAIRN_PASSWORD` is **the lab path and is named as such in the script**. The
 production path is the portal: the appliance authenticates with the key

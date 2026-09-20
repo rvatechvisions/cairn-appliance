@@ -170,15 +170,42 @@ capability_credential_source() {
     say "portal:   <unset>"
   fi
 
-  # The credential for this run, and where it came from. Read from the
-  # environment only -- never from a file, which is the whole point.
+  # Ask for it here rather than requiring the operator to arrange an
+  # environment variable first.
+  #
+  # The documented lab path was `read -rs CAIRN_PASSWORD && export ...` in the
+  # operator's own shell, and it is fragile in three separate ways that all
+  # look like a wrong password:
+  #
+  #   - **Pasted as a block, `read` consumes the NEXT LINE OF THE PASTE.** The
+  #     password becomes `echo`, kinit reports *Password incorrect*, and the
+  #     domain records a failed logon for a password nobody typed.
+  #   - A new terminal, or a reboot, arrives with nothing set -- which is the
+  #     design working, and is indistinguishable from having forgotten.
+  #   - An exported variable is readable from /proc for the life of the shell,
+  #     by root, long after the run that needed it.
+  #
+  # Prompting removes all three: one command, nothing to paste, and the value
+  # lives in this process rather than in the shell that launched it.
+  #
+  # CAIRN_PASSWORD is still honoured when it is set, because a non-interactive
+  # run has no terminal to ask. `[ -t 0 ]` is the test for that, and a run with
+  # no terminal and no variable falls through to the refusal below rather than
+  # blocking for input nobody can supply.
+  if [ -z "${CAIRN_PASSWORD:-}" ] && [ -t 0 ]; then
+    printf '\n  password for %s (not echoed): ' "${PRINCIPAL:-the service account}"
+    IFS= read -rs CAIRN_PASSWORD
+    printf '\n'
+    export CAIRN_PASSWORD
+  fi
+
   if [ -n "${CAIRN_PASSWORD:-}" ]; then
     say ""
-    say "CREDENTIAL SOURCE: this operator's shell, for this run only."
+    say "CREDENTIAL SOURCE: this operator's terminal, for this run only."
     say "  This is the lab path. It is honest about what it is: the credential"
-    say "  is in one environment variable and one memory-backed ticket cache,"
-    say "  and nothing writes it down -- but it passed through a human's"
-    say "  terminal, which is exactly what the portal fetch exists to avoid."
+    say "  is held in this process and one memory-backed ticket cache, and"
+    say "  nothing writes it down -- but it passed through a human's terminal,"
+    say "  which is exactly what the portal fetch exists to avoid."
     say "  **Never use this at a customer.** See LAB-BUILD.md."
     FOUND=$((FOUND + 1))
     return 0
@@ -196,33 +223,16 @@ capability_credential_source() {
     return 1
   fi
 
+  # Reached only with no terminal AND no variable, which is a scheduled or
+  # piped run. There is nobody to prompt, so it says what such a run needs
+  # rather than printing an interactive recipe nothing there can follow.
   say ""
-  say "NO CREDENTIAL SOURCE. Nothing below can authenticate."
-  say "  Either set CAIRN_PASSWORD for a lab run, or enrol this appliance and"
-  say "  set CAIRN_PORTAL once the portal side exists."
-
-  # Print the command rather than the variable's name.
-  #
-  # CAIRN_PASSWORD lives in one shell's environment and nowhere else, which is
-  # the design working -- and it means a new terminal, or a reboot, arrives
-  # here with nothing set. Naming the variable and leaving the reader to
-  # reconstruct the three lines that fill it safely is a message that tells
-  # somebody to do something without giving them the way to do it.
-  #
-  # `set +H` is in the block because a password containing ! is expanded by an
-  # interactive bash before read ever sees it, and the error it gives --
-  # "event not found" -- names neither the password nor the shell's history.
+  say "NO CREDENTIAL SOURCE, and no terminal to ask at."
+  say "  Run this from a terminal and it will prompt, or set CAIRN_PASSWORD"
+  say "  in the environment of the run for an unattended one."
   say ""
-  say "  For a lab run, in this shell:"
-  say ""
-  say "    set +H"
-  say "    read -rsp 'password for ${PRINCIPAL:-the service account}: ' CAIRN_PASSWORD"
-  say "    echo"
-  say "    export CAIRN_PASSWORD"
-  say ""
-  say "  It is read without echo, never appears on a command line, and lives"
-  say "  only in this shell. Do not put it in ${SETTINGS} -- this script"
-  say "  refuses to start if it finds one there."
+  say "  Do not put a password in ${SETTINGS}."
+  say "  This script refuses to start if it finds one there."
   UNASKED=$((UNASKED + 1))
   return 1
 }

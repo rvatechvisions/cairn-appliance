@@ -223,6 +223,26 @@ capability_kerberos() {
     return 1
   fi
 
+  # Said before the request rather than after the refusal, and the reason is a
+  # rule rather than tidiness: ONE FAILED AUTHENTICATION IS A STOP, NOT A
+  # RETRY. Failed authentications accumulate in somebody else's directory as
+  # lockout counters and security events, so a request we can already see is
+  # malformed is one not to send. A lower-case realm is the most common
+  # first-run mistake and the KDC's answer to it names neither the realm nor
+  # its case.
+  #
+  # It warns and proceeds rather than refusing. A lower-case realm is unusual
+  # and not illegal, and a guard that refuses a legal configuration is a guard
+  # somebody switches off.
+  case "$REALM" in
+    *[a-z]*)
+      say "NOTE BEFORE ASKING: CAIRN_REALM is '${REALM}', which contains lower"
+      say "  case. Kerberos realms are case-sensitive and conventionally upper"
+      say "  case. If this refuses, try '$(printf '%s' "$REALM" | tr 'a-z' 'A-Z')'"
+      say "  before suspecting the password or the clock."
+      ;;
+  esac
+
   # A MEMORY-backed ticket cache, which is the whole design in one line.
   #
   # It lives in this process and its children and is gone when the script
@@ -246,6 +266,30 @@ capability_kerberos() {
   say "REFUSED: no ticket. The account, the password or the clock is the cause."
   say "  Kerberos refuses a request more than five minutes out from the KDC, and"
   say "  the error does not say so in those words."
+
+  # Name the likely cause when the likely cause is our own configuration.
+  #
+  # A realm written in lower case is the most common first-run failure here,
+  # and kinit answers it with "KDC reply did not match expectations" -- a
+  # sentence that names neither the realm nor its case. The KDC issues for the
+  # upper-case realm, the client asked for the lower-case one, and they do not
+  # match. Jackie hit exactly this on the first live run, 20 September 2026.
+  #
+  # It is reported as the first thing to check rather than as the cause: a
+  # lower-case realm is unusual and not illegal, so this must not become a
+  # confident wrong answer standing in front of a real password problem.
+  case "$REALM" in
+    *[a-z]*)
+      say ""
+      say "  CHECK THE REALM'S CASE FIRST. CAIRN_REALM is '${REALM}', which"
+      say "  contains lower case. Kerberos realms are case-sensitive and are"
+      say "  conventionally upper case, so a KDC that issues for"
+      say "  '$(printf '%s' "$REALM" | tr 'a-z' 'A-Z')' will not match a request"
+      say "  for '${REALM}'. Set CAIRN_REALM and the part of CAIRN_PRINCIPAL"
+      say "  after the @ in upper case, and leave host names in lower."
+      ;;
+  esac
+
   REFUSED=$((REFUSED + 1))
   return 1
 }

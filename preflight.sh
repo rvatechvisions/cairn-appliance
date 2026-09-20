@@ -312,10 +312,65 @@ capability_kerberos() {
   chmod 700 "$CCDIR"
   export KRB5CCNAME="FILE:${CCDIR}/ccache"
 
+  # A Kerberos configuration for this run, written beside the ticket.
+  #
+  # `krb5-user` installs with DEBIAN_FRONTEND=noninteractive so that its realm
+  # dialogue cannot stall an unattended bootstrap, and the cost of that is an
+  # /etc/krb5.conf with no default realm. **kinit does not notice**, because
+  # CAIRN_PRINCIPAL is fully qualified and carries its own realm -- so step 1
+  # passes and step 2 fails with *Unspecified GSS failure ... Configuration
+  # file does not specify default realm*, which names neither Kerberos nor the
+  # file it is about. Seen on the appliance, 20 September 2026.
+  #
+  # It is generated per run in the tmpfs directory rather than written to
+  # /etc, because preflight answers what this host can reach and must not
+  # change the host to get a better answer. Everything in it is derived from
+  # settings the operator already supplied; nothing is invented.
+  #
+  # `rdns = false` is not a preference: with reverse lookups on, the service
+  # principal is built from whatever PTR the resolver returns, so a DC with a
+  # stale or absent PTR produces a principal the KDC has never heard of, and
+  # the error talks about a server rather than about DNS.
+  {
+    printf '[libdefaults]\n'
+    printf '    default_realm = %s\n' "$REALM"
+    printf '    dns_lookup_realm = false\n'
+    printf '    dns_lookup_kdc = true\n'
+    printf '    rdns = false\n\n'
+    printf '[realms]\n'
+    printf '    %s = {\n' "$REALM"
+    printf '        kdc = %s\n' "$DC"
+    printf '    }\n\n'
+    printf '[domain_realm]\n'
+    printf '    .%s = %s\n' "$(printf '%s' "$REALM" | tr 'A-Z' 'a-z')" "$REALM"
+    printf '    %s = %s\n' "$(printf '%s' "$REALM" | tr 'A-Z' 'a-z')" "$REALM"
+  } > "${CCDIR}/krb5.conf" || {
+    say "NOT ASKED: could not write a Kerberos configuration for this run."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  }
+  export KRB5_CONFIG="${CCDIR}/krb5.conf"
+
+  say "krb5.conf: generated for this run from CAIRN_REALM and CAIRN_DC."
+  if [ -f /etc/krb5.conf ] && grep -q 'default_realm' /etc/krb5.conf; then
+    say "  /etc/krb5.conf also names a default realm and is NOT being used here."
+    say "  If a later collector reads it instead, that file is what it will get."
+  fi
+
   # Piped into kinit rather than passed as an argument: a password on a command
   # line is visible in `ps` to every user on the host for as long as the call
   # takes, which is a disclosure to anybody watching.
-  if printf '%s' "$CAIRN_PASSWORD" | kinit "$PRINCIPAL" 2>&1 | sed 's/^/  /'; then
+  #
+  # Captured rather than piped straight into sed, because the refusal below has
+  # to read what the KDC actually said. Piping it away left every failure
+  # looking alike -- "the account, the password or the clock" -- when kinit had
+  # already distinguished them.
+  local kinit_out kinit_status
+  kinit_out="$(printf '%s' "$CAIRN_PASSWORD" | kinit "$PRINCIPAL" 2>&1)"
+  kinit_status=$?
+  [ -n "$kinit_out" ] && printf '%s\n' "$kinit_out" | sed 's/^/  /'
+
+  if [ "$kinit_status" -eq 0 ]; then
 
     # Read the cache rather than trusting the exit status.
     #
@@ -345,9 +400,62 @@ capability_kerberos() {
     return 1
   fi
 
-  say "REFUSED: no ticket. The account, the password or the clock is the cause."
-  say "  Kerberos refuses a request more than five minutes out from the KDC, and"
-  say "  the error does not say so in those words."
+  # What the KDC said, rather than a list of everything it might have meant.
+  #
+  # kinit distinguishes these and the first version of this message did not,
+  # printing "the account, the password or the clock" over an answer that had
+  # already named one of the three. A refusal that lists every possible cause
+  # sends somebody to check all of them, starting with whichever they thought
+  # of first.
+  case "$kinit_out" in
+
+    *"Password incorrect"*)
+      say "REFUSED: the domain answered, and the password does not match."
+      say ""
+      say "  THIS IS A DEFINITE ANSWER, AND THREE THINGS ARE NOW PROVEN: the"
+      say "  realm is right, ${PRINCIPAL} exists, and the KDC is reachable and"
+      say "  replied. Only the password is wrong."
+      say ""
+      say "  STOP RATHER THAN RETRYING. Each attempt increments the lockout"
+      say "  counter on this account in the customer's own directory and writes"
+      say "  a failed-logon event to the domain controller. A password typed"
+      say "  twice more is a locked service account and a security alert"
+      say "  somebody has to answer for."
+      say ""
+      say "  Verify it away from here instead: sign in as ${PRINCIPAL} on a"
+      say "  domain-joined machine, or reset it deliberately on the DC and use"
+      say "  the value you set. It was read without echo, so a typo is"
+      say "  invisible -- check the length matches what you expect with"
+      say "  printf '%s' \"\${#CAIRN_PASSWORD}\" before trying again."
+      ;;
+
+    *"Clock skew"*|*"clock skew"*)
+      say "REFUSED: the clocks disagree by more than Kerberos allows."
+      say "  Five minutes is the limit. Neither the password nor the account is"
+      say "  implicated: this request never got as far as being judged."
+      say "  Compare 'timedatectl status' here with the clock on ${DC}."
+      ;;
+
+    *"not found in Kerberos database"*|*"Client not found"*)
+      say "REFUSED: the KDC has no such principal as ${PRINCIPAL}."
+      say "  The realm answered, so this is the NAME rather than the domain."
+      say "  Check CAIRN_PRINCIPAL against the account's userPrincipalName, and"
+      say "  remember the part after the @ is the realm and is case-sensitive."
+      ;;
+
+    *"Password has expired"*|*"password has expired"*)
+      say "REFUSED: the password is correct and the domain will not issue on it."
+      say "  It has expired. A service account for this should be set not to"
+      say "  expire -- see LAB-BUILD.md section 2 -- which is a change to the"
+      say "  account rather than anything on this appliance."
+      ;;
+
+    *)
+      say "REFUSED: no ticket. The account, the password or the clock is the cause."
+      say "  Kerberos refuses a request more than five minutes out from the KDC, and"
+      say "  the error does not say so in those words."
+      ;;
+  esac
 
   # Name the likely cause when the likely cause is our own configuration.
   #

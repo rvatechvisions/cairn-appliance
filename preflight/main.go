@@ -128,22 +128,37 @@ func main() {
 		// layer looks fine, which is exactly when a bare code reads as
 		// something being broken.
 		if strings.Contains(err.Error(), "ERROR_ACCESS_DENIED") {
+			account := accountName(os.Getenv("CAIRN_PRINCIPAL"))
 			fmt.Fprintf(os.Stderr, "\n"+
 				"  THE SERVER ANSWERED. Everything below this is working: the endpoint\n"+
 				"  mapper resolved, the interface bound, Kerberos authenticated, and the\n"+
 				"  call was dispatched. What it refused is the READ.\n"+
 				"\n"+
-				"  MS-DHCPM reads need membership of DHCP Users, which is read-only on\n"+
-				"  the DHCP service and is the whole grant this appliance asks for. On a\n"+
-				"  domain controller:\n"+
+				"  FIRST, whether the account holds the grant at all:\n"+
 				"\n"+
 				"    Get-ADPrincipalGroupMembership %s | Select-Object Name\n"+
+				"\n"+
+				"  DHCP Users is read-only on the DHCP service and is the whole grant\n"+
+				"  this appliance asks for. If it is absent:\n"+
+				"\n"+
 				"    Add-ADGroupMember -Identity \"DHCP Users\" -Members %s\n"+
 				"\n"+
-				"  Membership travels in the Kerberos ticket, and preflight takes a fresh\n"+
-				"  one each run -- so add it and run again. Nothing here needs changing.\n",
-				accountName(os.Getenv("CAIRN_PRINCIPAL")),
-				accountName(os.Getenv("CAIRN_PRINCIPAL")))
+				"  Membership travels in the Kerberos ticket and preflight takes a fresh\n"+
+				"  one each run, so adding it is enough -- there is nothing to restart\n"+
+				"  here and nothing to sign out of.\n"+
+				"\n"+
+				"  IF IT IS ALREADY THERE, this is not the answer and the refusal is\n"+
+				"  something else. Seen on RVA's own domain, 20 September 2026, with the\n"+
+				"  membership present. What separates the possibilities is asking the\n"+
+				"  same question from Windows as the same account:\n"+
+				"\n"+
+				"    Get-DhcpServerv4Scope -ComputerName <the DHCP server>\n"+
+				"\n"+
+				"  Refused there too, and the grant is genuinely not sufficient on this\n"+
+				"  server, which is a question for whoever administers it. Answered\n"+
+				"  there, and the account can read DHCP while THIS probe cannot, which\n"+
+				"  makes it ours.\n",
+				account, account)
 		}
 		os.Exit(1)
 	}

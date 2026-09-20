@@ -9,6 +9,47 @@ collector is a separate thing and is not here.
 
 ---
 
+## What has been proven, against a real domain
+
+**20 September 2026, RVA Tech Visions' own production domain**, from a Debian 13
+host that is **not joined to it**, with an ordinary domain user whose only extra
+membership is `DHCP Users`. Five of six capabilities answered.
+
+| | |
+| --- | --- |
+| Nothing durable on the box | **Proven** — no keytab, no stored password |
+| Appliance key | **Proven** — generated locally, 600 root:root, never transmitted |
+| Kerberos | **Proven** — ticket issued and read back from a tmpfs cache |
+| Active Directory over LDAP | **Proven** — bound read, SASL SSF 256 |
+| DNS zones in the directory | **Proven** — 2 zones readable |
+| Authorised DHCP servers | **Proven** — `CN=NetServices` read, 2 entries |
+| DHCP over MS-DHCPM | **Not proven** — the probe has never compiled; see below |
+
+**This answers the question `SPIKE-LINUX-DHCP-2026-09-19.md` was reopened for.**
+A Linux box outside the trust boundary can read a directory a district actually
+uses. The credential model held throughout: the password existed in one
+process, the ticket in one tmpfs cache removed at exit, and nothing on the
+domain was changed by any of it.
+
+**What is not proven is as important.** The MS-DHCPM probe has still never run,
+so *reading leases over RPC* is untested — and that is the one capability the
+collector most needs. Four of the five that passed are LDAP reads, which is a
+narrower claim than "the appliance works".
+
+**Two findings from that run worth keeping**, both of which cost an hour and
+neither of which is discoverable from documentation:
+
+- **An MIT `MEMORY:` ticket cache is private to the process that creates it.**
+  `kinit` succeeds, exits, and takes the cache with it; every later process
+  inherits a variable naming something that is gone.
+- **OpenLDAP canonicalises the server name itself**, by reverse-resolving the
+  address, separately from Kerberos's `rdns`. It asks for `ldap/<whatever the
+  PTR says>`, so a host holding a perfectly good ticket is told the server is
+  not in the Kerberos database. `SASL_NOCANON on` is what fixed it, and
+  `kvno` is what proved the principal had been there all along.
+
+---
+
 ## Before you start: what the lab needs
 
 Read this first. Every one of these is a prerequisite rather than a

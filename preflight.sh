@@ -891,6 +891,25 @@ capability_dhcp() {
   # where one refuses is a different fact from a site with five servers, and
   # one summary line cannot carry both.
   local any_found=0
+
+  # Split the probe's flags BEFORE IFS is changed below.
+  #
+  # `local IFS=,` is there to split the comma-separated server list, and it is
+  # in scope for everything inside the loop -- so an unquoted expansion added
+  # in there later splits on commas too. CAIRN_PROBE_ARGS="-transport
+  # ncacn_np:" contains no comma, so it arrived as ONE argument and Go
+  # reported `flag provided but not defined: -transport ncacn_np:`, naming a
+  # flag that is defined.
+  #
+  # That is correct-by-arrangement: the IFS change was right for its own loop
+  # and quietly wrong for something written inside it an hour later. An array
+  # built out here cannot be re-split by it.
+  local -a probe_args=()
+  if [ -n "${CAIRN_PROBE_ARGS:-}" ]; then
+    # shellcheck disable=SC2206
+    probe_args=($CAIRN_PROBE_ARGS)
+  fi
+
   local IFS=,
   for server in $DHCP_SERVERS; do
     server="$(printf '%s' "$server" | tr -d ' ')"
@@ -905,8 +924,7 @@ capability_dhcp() {
     # plainly it was named. KRB5CCNAME reaches the probe only because it was
     # separately exported for kinit. Naming it on the command that needs it
     # keeps the reason visible at the place it matters.
-    # CAIRN_PROBE_ARGS reaches the probe unquoted, deliberately, so a caller
-    # can pass more than one flag:
+    # CAIRN_PROBE_ARGS carries extra flags to the probe:
     #
     #   CAIRN_PROBE_ARGS="-debug" ./preflight.sh
     #   CAIRN_PROBE_ARGS="-transport ncacn_np:" ./preflight.sh
@@ -915,8 +933,7 @@ capability_dhcp() {
     # ticket it needs lives in a tmpfs cache this script deletes on exit --
     # so by the time somebody has a shell to run it from, the credential is
     # gone. A diagnostic flag nobody can reach is a flag that does not exist.
-    # shellcheck disable=SC2086
-    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" ${CAIRN_PROBE_ARGS:-} 2>&1 | sed 's/^/  /'; then
+    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" "${probe_args[@]}" 2>&1 | sed 's/^/  /'; then
       any_found=1
     else
       # "Refused" rather than "did not answer", because they are different

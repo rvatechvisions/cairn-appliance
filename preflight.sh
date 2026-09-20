@@ -361,7 +361,35 @@ capability_kerberos() {
   }
   export KRB5_CONFIG="${CCDIR}/krb5.conf"
 
+  # And an OpenLDAP configuration beside it, because `rdns = false` above does
+  # not reach the LDAP client.
+  #
+  # **OpenLDAP canonicalises the server's name itself before handing it to
+  # GSSAPI**, by reverse-resolving the address it connected to. That is a
+  # separate mechanism from MIT Kerberos's `rdns`, governed by SASL_NOCANON in
+  # ldap.conf, and it is why an appliance can hold a perfectly good service
+  # ticket for ldap/<the configured name> and still be told the server is not
+  # in the Kerberos database: the client asked for ldap/<whatever the PTR
+  # said>, which is a different principal and frequently does not exist.
+  #
+  # Proven on the appliance, 20 September 2026: kvno obtained tickets for
+  # ldap/, host/ AND cifs/ on the configured name, while ldapsearch against
+  # that same name was refused. The SPN was never the problem.
+  #
+  # Turning canonicalisation off makes the name the operator configured the
+  # name that is used, which is the same decision as `rdns = false` and is
+  # made for the same reason: a stale or absent PTR should not silently
+  # redirect a request somewhere nobody chose.
+  printf 'SASL_NOCANON on\n' > "${CCDIR}/ldap.conf" || {
+    say "NOT ASKED: could not write an LDAP configuration for this run."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  }
+  export LDAPCONF="${CCDIR}/ldap.conf"
+
   say "krb5.conf: generated for this run from CAIRN_REALM and CAIRN_DC."
+  say "ldap.conf: generated with SASL_NOCANON on, so the configured name is"
+  say "  the name used rather than whatever a reverse lookup returns."
   if [ -f /etc/krb5.conf ] && grep -q 'default_realm' /etc/krb5.conf; then
     say "  /etc/krb5.conf also names a default realm and is NOT being used here."
     say "  If a later collector reads it instead, that file is what it will get."
@@ -621,22 +649,56 @@ capability_ldap() {
         # why this is the read to make rather than another bind.
         if command -v kvno >/dev/null 2>&1; then
           say "  Asking the KDC which principals it holds for this host:"
-          local spn result
+          local spn result ldap_spn_exists=0
           for spn in "ldap/${DC}" "host/${DC}" "cifs/${DC}"; do
             result="$(kvno "$spn" 2>&1)"
             case "$result" in
-              *"kvno = "*) say "    EXISTS       ${spn}" ;;
+              *"kvno = "*)
+                say "    EXISTS       ${spn}"
+                [ "$spn" = "ldap/${DC}" ] && ldap_spn_exists=1
+                ;;
               *"not found in Kerberos database"*) say "    NOT PRESENT  ${spn}" ;;
               *) say "    UNCLEAR      ${spn} -- ${result}" ;;
             esac
           done
           say ""
-          say "  If host/ exists and ldap/ does not, the computer object is"
-          say "  there and is missing that one principal, which an"
-          say "  administrator adds with setspn on the DC. If none exists,"
-          say "  the KDC that issued the ticket is not the one holding this"
-          say "  computer object -- check whether ${REALM} is the domain"
-          say "  ${DC} is actually joined to."
+
+          # The conclusion follows the reading, rather than the reading being
+          # printed under a conclusion written before it.
+          if [ "$ldap_spn_exists" -eq 1 ]; then
+            say "  ldap/${DC} EXISTS AND THIS CREDENTIAL CAN OBTAIN IT. So the"
+            say "  service principal is not missing and the domain is not"
+            say "  refusing it -- the client asked for a DIFFERENT name."
+            say ""
+            say "  OpenLDAP reverse-resolves the address it connected to and"
+            say "  builds the principal from that, separately from Kerberos's"
+            say "  own rdns setting. A stale, absent or differing PTR therefore"
+            say "  sends it to a principal nobody configured."
+
+            # Show the name that canonicalisation would have produced.
+            local addr ptr
+            addr="$(getent hosts "$DC" 2>/dev/null | awk '{print $1}')"
+            if [ -n "$addr" ]; then
+              ptr="$(getent hosts "$addr" 2>/dev/null | awk '{print $2}')"
+              say ""
+              say "  ${DC} is ${addr}, and reverse-resolving ${addr} gives:"
+              say "    ${ptr:-nothing -- there is no PTR record for it}"
+              if [ -n "$ptr" ] && [ "$ptr" != "$DC" ]; then
+                say "  THAT is the name it was asking for: ldap/${ptr}"
+              fi
+            fi
+
+            say ""
+            say "  This run already sets SASL_NOCANON on, which turns that"
+            say "  off. If you are still reading this, that setting did not"
+            say "  take effect -- check LDAPCONF is honoured by this build."
+          else
+            say "  host/ present with ldap/ absent is a computer object missing"
+            say "  that one principal, which an administrator adds with setspn"
+            say "  on the DC. None present means the KDC that issued the ticket"
+            say "  is not the one holding this computer object -- check whether"
+            say "  ${REALM} is the domain ${DC} is actually joined to."
+          fi
         else
           say "  kvno is not installed, so which principals exist cannot be"
           say "  read from here. It ships in krb5-user."

@@ -572,39 +572,76 @@ capability_ldap() {
       # used exactly as configured rather than being replaced by whatever a
       # PTR says -- which is the safer default and is what surfaces this.
       say ""
-      say "  THIS IS THE NAME IN CAIRN_DC, NOT THE ACCOUNT AND NOT THE TICKET."
-      say "  Step 1 holds a valid ticket; the KDC simply has no service"
-      say "  principal called ldap/${DC}."
-      say ""
-      say "  A domain controller registers its service principals against its"
-      say "  own hostname. An alias that points at it -- a CNAME, a"
-      say "  round-robin record, a friendly name somebody added -- resolves"
-      say "  correctly and has no principal of its own, which is exactly what"
-      say "  this looks like."
+      say "  THIS IS THE NAME, NOT THE ACCOUNT AND NOT THE TICKET."
+      say "  Step 1 holds a valid ticket; the KDC has no service principal"
+      say "  called ldap/${DC}, and refused before any right was consulted."
 
       # Read what the resolver says rather than asserting what it probably is.
-      local canonical
-      canonical="$(getent hosts "$DC" 2>&1)"
-      if [ -n "$canonical" ]; then
-        say ""
-        say "  What this host's resolver says ${DC} is:"
-        printf '%s\n' "$canonical" | sed 's/^/    /'
-      fi
+      #
+      # The first version of this branch asserted the alias explanation and
+      # told the reader to use "a controller's own hostname". On the appliance
+      # this ran against, CAIRN_DC ALREADY WAS one: getent returned the same
+      # name and the SRV record advertised it, since a controller registers
+      # that record itself. The advice was confident and useless, which is
+      # worse than no advice -- so the two cases are now distinguished by
+      # reading, and only the one the reading supports is offered.
+      local canonical srv_names
+      canonical="$(getent hosts "$DC" 2>/dev/null | awk '{print $2}')"
 
-      # The authoritative list of domain controllers, when the tool is here.
+      srv_names=""
       if command -v dig >/dev/null 2>&1 && [ -n "$REALM" ]; then
-        local srv
-        srv="$(dig +short -t SRV "_ldap._tcp.$(printf '%s' "$REALM" | tr 'A-Z' 'a-z')" 2>&1)"
-        if [ -n "$srv" ]; then
-          say ""
-          say "  Domain controllers this domain advertises in DNS:"
-          printf '%s\n' "$srv" | sed 's/^/    /'
-        fi
+        srv_names="$(dig +short -t SRV "_ldap._tcp.$(printf '%s' "$REALM" | tr 'A-Z' 'a-z')" 2>/dev/null)"
       fi
 
       say ""
-      say "  Set CAIRN_DC to a controller's own hostname and run this again."
-      say "  Nothing on the domain needs changing."
+      say "  What the resolver says ${DC} is:"
+      say "    ${canonical:-nothing -- the name did not resolve}"
+      if [ -n "$srv_names" ]; then
+        say "  Controllers this domain advertises in DNS:"
+        printf '%s\n' "$srv_names" | sed 's/^/    /'
+      fi
+
+      if [ -n "$canonical" ] && [ "$canonical" != "$DC" ]; then
+        say ""
+        say "  THESE DIFFER, so ${DC} is an alias. A controller registers its"
+        say "  principals against its own name, and an alias pointing at it"
+        say "  resolves correctly while having no principal of its own."
+        say "  Set CAIRN_DC to ${canonical} and run this again."
+      else
+        say ""
+        say "  THESE AGREE, so this is not an alias and changing CAIRN_DC will"
+        say "  not help. The name is the controller's own."
+        say ""
+
+        # Ask the KDC which principals it does hold for this host.
+        #
+        # kvno requests a SERVICE ticket against the TGT already in the cache.
+        # It is not a password authentication, so it cannot contribute to a
+        # lockout -- which is why it is safe to ask several times here, and
+        # why this is the read to make rather than another bind.
+        if command -v kvno >/dev/null 2>&1; then
+          say "  Asking the KDC which principals it holds for this host:"
+          local spn result
+          for spn in "ldap/${DC}" "host/${DC}" "cifs/${DC}"; do
+            result="$(kvno "$spn" 2>&1)"
+            case "$result" in
+              *"kvno = "*) say "    EXISTS       ${spn}" ;;
+              *"not found in Kerberos database"*) say "    NOT PRESENT  ${spn}" ;;
+              *) say "    UNCLEAR      ${spn} -- ${result}" ;;
+            esac
+          done
+          say ""
+          say "  If host/ exists and ldap/ does not, the computer object is"
+          say "  there and is missing that one principal, which an"
+          say "  administrator adds with setspn on the DC. If none exists,"
+          say "  the KDC that issued the ticket is not the one holding this"
+          say "  computer object -- check whether ${REALM} is the domain"
+          say "  ${DC} is actually joined to."
+        else
+          say "  kvno is not installed, so which principals exist cannot be"
+          say "  read from here. It ships in krb5-user."
+        fi
+      fi
       ;;
   esac
 

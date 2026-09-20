@@ -70,6 +70,17 @@ import (
 	dhcpsrv "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v1"
 	dhcpsrv2 "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv2/v1"
 
+	// The endpoint mapper, which is how a dynamic service is found at all.
+	//
+	// The DHCP server does not listen on a fixed port. It registers with the
+	// mapper on 135 and is assigned whatever was free, so a client asks the
+	// mapper where the interface lives and is then told. Dialling 135 and
+	// offering it MS-DHCPM asks the MAPPER to speak a protocol only the DHCP
+	// service speaks, which it answers with "abstract syntax not supported" --
+	// a sentence about presentation contexts that is really about having
+	// knocked on the wrong door. Seen on the appliance, 20 September 2026.
+	"github.com/oiweiwei/go-msrpc/msrpc/epm/epm/v3"
+
 	// Kerberos, from the ticket cache preflight.sh established. No password is
 	// read, prompted for or stored by this program: kinit has already turned
 	// the credential into a ticket and this only presents it.
@@ -157,25 +168,41 @@ func run(ctx context.Context, server string, scopeLimit int) error {
 
 	ctx = gssapi.NewSecurityContext(ctx)
 
-	conn, err := dcerpc.Dial(ctx, net.JoinHostPort(server, "135"),
-		dcerpc.WithSeal(),
-		dcerpc.WithMechanism(ssp.KRB5),
-		dcerpc.WithTargetName("host/"+server),
-	)
+	// The server by NAME, with no port, and the mapper as a dial option.
+	//
+	// The first version dialled host:135 and put the security options here.
+	// Both were wrong, and in a way that produced a bind which succeeded --
+	// against the endpoint mapper, which is not the service being asked for.
+	// The options below belong on the CLIENTS rather than on the connection:
+	// the connection is how you reach the mapper, and each client then says
+	// which interface it wants and over what transport.
+	conn, err := dcerpc.Dial(ctx, server, epm.EndpointMapper(ctx, server))
 	if err != nil {
-		return fmt.Errorf("dialling the endpoint mapper: %w", err)
+		return fmt.Errorf("dialling %s through the endpoint mapper: %w", server, err)
 	}
 	defer conn.Close(ctx)
 
 	// Two clients, one connection. Bound separately and reported separately,
 	// because a server can answer one interface and refuse the other -- and
 	// collapsing that into "MS-DHCPM refused" would name the wrong thing.
-	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn)
+	//
+	// WithSeal encrypts the exchange. `host/<server>` is the target principal,
+	// which kvno confirmed exists on this domain rather than being assumed:
+	// the DHCP service runs as the machine account, so its ticket is the
+	// host one rather than a dhcp-specific principal.
+	options := []dcerpc.Option{
+		dcerpc.WithSeal(),
+		dcerpc.WithMechanism(ssp.KRB5),
+		dcerpc.WithEndpoint("ncacn_ip_tcp:"),
+		dcerpc.WithTargetName("host/" + server),
+	}
+
+	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn, options...)
 	if err != nil {
 		return fmt.Errorf("binding DHCPSRV: %w", err)
 	}
 
-	clients, err := dhcpsrv2.NewDhcpsrv2Client(ctx, conn)
+	clients, err := dhcpsrv2.NewDhcpsrv2Client(ctx, conn, options...)
 	if err != nil {
 		return fmt.Errorf("binding DHCPSRV2: %w", err)
 	}

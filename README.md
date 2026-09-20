@@ -34,7 +34,78 @@ they both look like success — so the shape of the host is a prerequisite rathe
 than a preference, and `bootstrap.sh` prints what it finds without correcting
 it.
 
-### The keytab is a deferral, not a solution — and it is the open question
+### The credential: held in the portal, never on this box
+
+**Jackie's design, 20 September 2026. It replaces both the hand-placed keytab
+and the domain join that was briefly proposed to fix it.**
+
+- The customer enters a read-only service credential **into the portal**.
+- This appliance connects **out** to the portal and fetches it at run time.
+- It `kinit`s into a **memory-backed** credential cache — `KRB5CCNAME=MEMORY:`
+  — uses it, and drops it. **Nothing durable on the box.**
+- **Revocation is one action in the portal**, not a site visit.
+- **We never handle the customer's credential** — not in a ticket, not in a
+  message, not in a file we place. That rule has stood all week on discipline;
+  this is the first arrangement that enforces it rather than relying on it.
+
+`preflight.sh` checks the durability claim rather than asserting it: it refuses
+to run if it finds a keytab or a password in the settings file, because a
+design whose central property is *there is no copy here* is worth exactly what
+checking it is worth.
+
+### The appliance authenticates with a keypair, not a bearer token
+
+Generated on this box at enrolment by `enroll.sh`. The public half is
+registered with the portal; **the private half is never transmitted.**
+
+The reasoning is about copies rather than about consequences. A bearer token
+exists in at least two places — the portal minted it, it travelled in a
+response, somebody pasted it somewhere, and a backup or a configuration system
+may hold it. Any of those can leak without anybody touching this machine. A
+private key generated here exists in one place, and the portal cannot leak what
+it never had.
+
+**What it does not change, said plainly:** an attacker with root on this box
+gets the key and can then ask the portal for the credential, exactly as a
+stolen token would let them. The difference is the number of copies and the
+paths they travelled. Both are revocable centrally, which is the other half of
+why either beats a credential file.
+
+### Why not join the domain
+
+It was the obvious fix for a keytab nobody manages, and it is **withdrawn**: a
+collector must not be a member of the trust boundary it reads.
+
+A joined appliance is a computer object inside the directory it is measuring —
+subject to that domain's policy, inside its blast radius, and, if it is
+compromised, a foothold *within* the domain rather than a read-only credential
+held outside it. It also keeps a durable machine credential on the box, which
+is the property this design exists to remove.
+
+### The residual, which is the floor rather than a flaw
+
+**While a run is happening the credential is in this appliance's memory, so a
+compromised appliance can capture it.** No arrangement removes that: the box
+has to hold the credential to use it.
+
+It is equally true of the Windows alternative — a domain-joined collector under
+a group Managed Service Account can be made to use that identity by anybody who
+owns the machine. And what is captured is read-only: an ordinary domain user
+plus `DHCP Users` can enumerate and cannot change a scope, a lease, an account
+or a policy, which the customer's own administrator can verify from the account
+rather than from our description of it.
+
+### ~~The keytab is a deferral — and the domain join that was to fix it~~
+
+> **Superseded 20 September 2026, and kept rather than deleted.** Everything
+> below was true when written and describes the two arrangements this design
+> replaced. It stays because the *reasoning* is what the new design is measured
+> against — in particular the paragraph explaining why file permissions are not
+> a solution, which is still the argument, and which the new design answers by
+> removing the file rather than by protecting it better.
+>
+> **The domain join is withdrawn**, on a ground the text below never considered:
+> a collector must not be a member of the trust boundary it reads.
 
 On Windows, a group managed service account is the better credential in every
 respect that matters: the domain generates and rotates its password, nothing is
@@ -101,7 +172,12 @@ collector rather than an argument.
 
 ## Installing
 
-Two steps, in order, and the first contacts nothing.
+**If you are building the lab this runs in, read `LAB-BUILD.md` instead.** It
+covers the two virtual machines, the service account and its exact rights, the
+credential, and what every line of preflight's output means — written for
+somebody who has read none of this.
+
+Three steps, in order, and the first contacts nothing.
 
 ```
 sudo ./bootstrap.sh
@@ -119,12 +195,23 @@ should still end up with Kerberos and LDAP working, and you should be told
 exactly which piece is missing rather than being left with a half-prepared
 machine.
 
-Then fill in `/etc/cairn-appliance/settings.env`, put the keytab where it says,
-and:
+Then fill in `/etc/cairn-appliance/settings.env` — realm in **upper case**,
+host names in lower — and give this appliance its identity:
 
 ```
-sudo ./preflight.sh
+sudo ./enroll.sh
 ```
+
+It generates the keypair here and prints the public half. **The portal side of
+enrolment is not built**, so it says so rather than implying it registered.
+
+```
+sudo -E ./preflight.sh
+```
+
+**`sudo -E`, not plain `sudo`.** Without it the credential does not survive
+into the elevated environment and step 1 reports it had none — which is true,
+and is not what you were trying to find out.
 
 ---
 
@@ -135,8 +222,8 @@ reasons and one verdict sends somebody to fix whichever they thought of first.
 
 | | What it asks | What a failure usually means |
 | --- | --- | --- |
-| **0. Domain membership** | `realm list`, `adcli`, `/etc/krb5.keytab` | Not a failure. It reports whether the credential is managed by the domain or placed by hand |
-| **1. Kerberos** | `kinit -k -t` with the keytab | The account's password was changed, or the clock is out |
+| **0. Where the credential comes from** | The appliance key, `CAIRN_PORTAL`, and whether a credential was supplied for this run | Not a failure. It reports whether this run is the lab path or the portal path |
+| **1. Kerberos** | `kinit` into a memory-backed cache | The password, the realm's case, or a clock more than five minutes out |
 | **2. AD over LDAP** | One bound read of the domain head | The account cannot read the directory |
 | **3. DNS in the directory** | `CN=MicrosoftDNS` under `DomainDnsZones` | The site's DNS is not directory-integrated — a normal state, not a failure |
 | **4. Authorised DHCP servers** | `CN=NetServices` in the configuration partition | Rare: this needs only an authenticated user |

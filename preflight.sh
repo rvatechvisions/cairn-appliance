@@ -54,125 +54,156 @@ fi
 REALM="${CAIRN_REALM:-}"
 DC="${CAIRN_DC:-}"
 PRINCIPAL="${CAIRN_PRINCIPAL:-}"
-KEYTAB="${CAIRN_KEYTAB:-${CONFIG_DIR}/cairn.keytab}"
 DHCP_SERVERS="${CAIRN_DHCP_SERVERS:-}"
 
 say "Cairn appliance preflight"
 say "realm     ${REALM:-<unset>}"
 say "dc        ${DC:-<unset>}"
 say "principal ${PRINCIPAL:-<unset>}"
-say "keytab    ${KEYTAB}"
 say "dhcp      ${DHCP_SERVERS:-<unset>}"
 say ""
 say "Read-only throughout. Nothing is submitted anywhere."
+say "No credential is written down by this script, and none is printed."
 
 # ---------------------------------------------------------------------------
-# 0. The keytab, before anything tries to use it.
+# Nothing durable, checked rather than claimed.
 #
-# Checked for permissions as well as presence. A keytab any local user can read
-# is the appliance's domain identity readable by anybody with a shell on it,
-# and that is worth failing on rather than noting.
+# The design's whole claim is that no copy of a customer's credential survives
+# a run on this box: it is fetched from the portal, used from a memory-backed
+# ticket cache, and dropped. A claim like that is worth exactly what checking
+# it is worth, so this refuses to continue if it finds the thing the design
+# says is not here.
+#
+# A keytab is the specific artifact the earlier design placed by hand, so it is
+# named; a password written into the settings file is the other way the same
+# property gets lost, so it is named too.
 # ---------------------------------------------------------------------------
-rule "the keytab"
-if [ ! -f "$KEYTAB" ]; then
-  say "NOT FOUND: ${KEYTAB}"
-  say "  Nothing below can be asked. Put the keytab in place and run this again."
+rule "nothing durable on this box"
+DURABLE=0
+
+for found in "$CONFIG_DIR"/*.keytab "$CONFIG_DIR"/*.kt /etc/krb5.keytab; do
+  [ -e "$found" ] || continue
+  say "FOUND A KEYTAB: ${found}"
+  DURABLE=1
+done
+
+if grep -qiE '^[[:space:]]*(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)=..*' "$SETTINGS" 2>/dev/null; then
+  say "FOUND A PASSWORD in ${SETTINGS}"
+  DURABLE=1
+fi
+
+if [ "$DURABLE" -ne 0 ]; then
+  say ""
+  say "REFUSING TO CONTINUE. A durable credential is on this appliance, and the"
+  say "  design this runs under says there is not one. The customer's credential"
+  say "  is held in the portal and fetched for the length of a run; a copy here"
+  say "  is a second place it lives, which nobody revokes and nobody rotates."
+  say ""
+  say "  If this host was built under the earlier keytab design, remove the file"
+  say "  and re-enrol. If a password was pasted into the settings file, remove"
+  say "  the line and treat that credential as disclosed."
   exit 1
 fi
 
-PERMS="$(stat -c '%a %U:%G' "$KEYTAB" 2>/dev/null || echo 'unknown')"
-say "present: ${KEYTAB} (${PERMS})"
-case "$PERMS" in
-  "600 root:root") say "  permissions are what they should be." ;;
-  *)
-    say "  REFUSING TO CONTINUE: this must be 600 and owned by root."
-    say "  A keytab readable by anybody else is the domain account readable by"
-    say "  anybody else. Fix it with:"
-    say "    chown root:root ${KEYTAB} && chmod 600 ${KEYTAB}"
-    exit 1
-    ;;
-esac
+say "no keytab, no stored password. Nothing here outlives a run."
 
 # ---------------------------------------------------------------------------
-# 0. Is this host a domain member, and by what mechanism?
+# 0. Where does the credential come from, and does it survive the run?
 #
 # ## This is the step the product question turns on
 #
-# `SPIKE-LINUX-DHCP-2026-09-19.md` chose Windows over Linux on one argument:
-# a domain-joined Windows collector runs under a group Managed Service Account,
-# where Active Directory generates and rotates the password and nothing sits in
-# a file anybody has to protect. A Linux collector needs a keytab on disk --
-# a long-lived credential, on a machine the client's domain does not manage.
+# The earlier design placed a keytab on this box by hand, and the objection to
+# it was never the file mode: a long-lived credential on a machine the client's
+# domain does not manage is one nobody rotates and nobody can revoke without
+# knowing it exists.
 #
-# **Mode 600 and a .gitignore entry do not answer that.** They constrain who on
-# this host can read the file. They are a lab-acceptable deferral, not a
-# solution, and this script says so rather than implying the problem is handled.
+# **A domain join was the candidate answer and is withdrawn. Jackie's decision,
+# 20 September 2026.** A collector must not be a member of the trust boundary
+# it reads. Joining would make this appliance a computer object inside the
+# directory it is measuring -- subject to that domain's policy, inside its
+# blast radius, and a foothold within it if this host is compromised, rather
+# than a read-only credential held outside it. It also keeps a durable machine
+# credential on the box, which is the property being removed.
 #
-# The candidate answer is a real domain join: realmd and adcli give the host a
-# **machine account**, the join tooling creates and rotates the keytab, and
-# revocation becomes disabling the computer object in Active Directory. It is
-# still a keytab on disk -- it is not a gMSA, and nothing here should pretend
-# otherwise -- but it moves Linux from *a secret nobody manages* to *a domain
-# member like any other*.
+# ## What replaces it
 #
-# ## It reports, and decides nothing
+# The customer enters a read-only credential **into the portal**. This
+# appliance connects out, authenticates with a key generated here at enrolment,
+# fetches the credential for the length of one run, kinits into a
+# memory-backed ticket cache, and drops it. Revocation is one action in the
+# portal rather than a site visit.
 #
-# A ticket from a hand-placed keytab and a ticket from a machine account are
-# the same ticket to step 1 and a different product. So this step exists to
-# make the difference visible in the output, and it never blocks the steps
-# below: a host with a hand-placed keytab is a perfectly good lab instrument.
+# The property that falls out of it, and the one worth stating: **we never
+# handle the client's credential.** Not in a ticket, not in a message, not in a
+# file anybody places. That rule has stood all week on discipline; this is the
+# first design that enforces it.
+#
+# ## It reports, and blocks nothing
+#
+# A run whose credential came from an operator's shell and one whose credential
+# came from the portal are the same ticket to step 1 and a different product.
+# This makes the difference visible rather than deciding anything: the lab path
+# in LAB-BUILD.md is deliberately the first kind.
 # ---------------------------------------------------------------------------
-rule "0. Domain membership"
-capability_domain_join() {
-  local joined=0
+rule "0. Where the credential comes from"
+capability_credential_source() {
+  local enrolled=0
 
-  if command -v realm >/dev/null 2>&1; then
-    local realms
-    realms="$(realm list --name-only 2>/dev/null)"
-    if [ -n "$realms" ]; then
-      say "FOUND: joined through realmd:"
-      printf '%s\n' "$realms" | sed 's/^/    /'
-      joined=1
-    else
-      say "realm is installed and this host is joined to nothing."
+  if [ -f "${CONFIG_DIR}/appliance.key" ]; then
+    local perms
+    perms="$(stat -c '%a %U:%G' "${CONFIG_DIR}/appliance.key" 2>/dev/null || echo unknown)"
+    say "enrolled: an appliance key exists (${perms}), generated here and never transmitted."
+    if [ "$perms" != "600 root:root" ]; then
+      say "  REFUSING TO CONTINUE: the appliance key must be 600 and owned by root."
+      say "  A key any local user can read is this appliance's identity readable"
+      say "  by anybody with a shell on it."
+      exit 1
     fi
+    enrolled=1
   else
-    say "realm(8) is not installed, so a realmd join cannot be detected."
+    say "not enrolled: no appliance key. Run enroll.sh to generate one."
   fi
 
-  if command -v adcli >/dev/null 2>&1; then
-    say "adcli is available for a join."
+  if [ -n "${CAIRN_PORTAL:-}" ]; then
+    say "portal:   ${CAIRN_PORTAL}"
   else
-    say "adcli is not installed."
+    say "portal:   <unset>"
   fi
 
-  # The machine account's own keytab, which is what a join writes. Distinct
-  # from CAIRN_KEYTAB, which is the one a person placed.
-  if [ -f /etc/krb5.keytab ]; then
-    say "a machine keytab exists at /etc/krb5.keytab, which a join writes."
-    joined=1
-  fi
-
-  say ""
-  if [ "$joined" -eq 1 ]; then
-    say "This host is a domain member. The credential below is managed by the"
-    say "  domain rather than placed by hand, and revoking it is disabling the"
-    say "  computer object in Active Directory."
-    say "  It is still a keytab on disk. It is not a gMSA."
+  # The credential for this run, and where it came from. Read from the
+  # environment only -- never from a file, which is the whole point.
+  if [ -n "${CAIRN_PASSWORD:-}" ]; then
+    say ""
+    say "CREDENTIAL SOURCE: this operator's shell, for this run only."
+    say "  This is the lab path. It is honest about what it is: the credential"
+    say "  is in one environment variable and one memory-backed ticket cache,"
+    say "  and nothing writes it down -- but it passed through a human's"
+    say "  terminal, which is exactly what the portal fetch exists to avoid."
+    say "  **Never use this at a customer.** See LAB-BUILD.md."
     FOUND=$((FOUND + 1))
     return 0
   fi
 
-  say "NOT JOINED: this host authenticates with a keytab somebody placed."
-  say "  That is acceptable for a lab instrument and is NOT a solution to the"
-  say "  credential problem: the file is long-lived, the domain does not manage"
-  say "  it, it does not rotate, and revoking it means knowing it exists."
-  say "  Nothing below is blocked by this. What it changes is what a passing"
-  say "  run is worth as a product rather than as an experiment."
+  if [ "$enrolled" -eq 1 ] && [ -n "${CAIRN_PORTAL:-}" ]; then
+    say ""
+    say "CREDENTIAL SOURCE: the portal, fetched per run."
+    say "  **The portal side of this is not built.** There is no endpoint to"
+    say "  fetch from yet, so nothing below can obtain a credential this way and"
+    say "  step 1 will report that it had none. Saying so here rather than"
+    say "  failing later is the difference between a missing feature and a"
+    say "  mystery."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  say ""
+  say "NO CREDENTIAL SOURCE. Nothing below can authenticate."
+  say "  Either set CAIRN_PASSWORD for a lab run, or enrol this appliance and"
+  say "  set CAIRN_PORTAL once the portal side exists."
   UNASKED=$((UNASKED + 1))
   return 1
 }
-capability_domain_join
+capability_credential_source
 
 # ---------------------------------------------------------------------------
 # 1. Kerberos
@@ -185,19 +216,36 @@ capability_kerberos() {
     return 1
   fi
 
-  # A private cache, so this never disturbs a ticket somebody else on the host
-  # is holding and nothing is left behind in the default one.
-  export KRB5CCNAME="FILE:$(mktemp -t cairn-preflight-XXXXXX.ccache)"
+  if [ -z "${CAIRN_PASSWORD:-}" ]; then
+    say "NOT ASKED: no credential was available for this run — see step 0."
+    say "  This is not a refusal by the domain. Nothing was sent to it."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
 
-  if kinit -k -t "$KEYTAB" "$PRINCIPAL" 2>&1 | sed 's/^/  /'; then
+  # A MEMORY-backed ticket cache, which is the whole design in one line.
+  #
+  # It lives in this process and its children and is gone when the script
+  # exits: there is no file to forget, none to back up, and nothing for the
+  # next person with a shell on this box to read. A FILE: cache under /tmp
+  # would work identically and would leave a usable ticket on disk, which is
+  # the property this design exists to remove.
+  export KRB5CCNAME="MEMORY:cairn-preflight"
+
+  # Piped into kinit rather than passed as an argument: a password on a command
+  # line is visible in `ps` to every user on the host for as long as the call
+  # takes, which is a disclosure to anybody watching.
+  if printf '%s' "$CAIRN_PASSWORD" | kinit "$PRINCIPAL" 2>&1 | sed 's/^/  /'; then
     say "FOUND: a ticket was issued for ${PRINCIPAL}"
+    say "  cache: ${KRB5CCNAME} — in memory, and gone when this script exits."
     klist 2>/dev/null | sed 's/^/  /'
     FOUND=$((FOUND + 1))
     return 0
   fi
 
-  say "REFUSED: no ticket. The account, the keytab or the clock is the cause;"
-  say "  a keytab stops working when the account's password is changed."
+  say "REFUSED: no ticket. The account, the password or the clock is the cause."
+  say "  Kerberos refuses a request more than five minutes out from the KDC, and"
+  say "  the error does not say so in those words."
   REFUSED=$((REFUSED + 1))
   return 1
 }

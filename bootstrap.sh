@@ -113,8 +113,15 @@ CAIRN_DC=
 # DHCP Users. Nothing else. It needs no administrative rights anywhere.
 CAIRN_PRINCIPAL=
 
-# The keytab for that account. Mode 600, root only.
-CAIRN_KEYTAB=/etc/cairn-appliance/cairn.keytab
+# Where this appliance fetches that account's credential from, per run.
+#
+# THERE IS DELIBERATELY NO PASSWORD IN THIS FILE, AND NO KEYTAB BESIDE IT.
+# The customer enters the credential into the portal; this appliance connects
+# out, authenticates with the key enroll.sh generated here, and holds the
+# credential only for the length of a run, in memory. A copy on this box would
+# be a second place it lives that nobody rotates and nobody can revoke without
+# knowing it exists -- and preflight refuses to run if it finds one.
+CAIRN_PORTAL=
 
 # The DHCP servers to ask, comma separated, by name. Preflight asks each one
 # and reports each answer separately -- a server that refuses is a different

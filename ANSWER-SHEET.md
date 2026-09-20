@@ -2,6 +2,9 @@
 
 One page. What to set up, what to run, and what each answer means.
 
+**Building the lab from nothing? Read `LAB-BUILD.md`.** This page assumes the
+environment exists.
+
 ---
 
 ## Set up
@@ -10,27 +13,31 @@ One page. What to set up, what to run, and what each answer means.
 | --- | --- |
 | Domain controller | Holds DNS. DHCP running somewhere you can name |
 | Service account | Ordinary domain user **+ DHCP Users**. Nothing else |
-| Keytab | `ktpass` on a domain-joined Windows host → copy to appliance → `chmod 600`, `chown root:root` |
-| Appliance | Debian/Ubuntu, **one interface**, **one resolver** (the customer's DNS) |
+| Credential | **Not on the appliance.** Held in the portal, fetched per run, used from memory. In the lab, typed into the shell for one run |
+| Appliance | Debian 12 / Ubuntu 24.04, **one interface**, **one resolver** (the customer's DNS), **not domain-joined** |
 | Clock | Within five minutes of the DC |
 
 ## Run
 
 ```
-sudo ./bootstrap.sh                      # installs, creates /etc/cairn-appliance (700)
-sudo vi /etc/cairn-appliance/settings.env
-sudo cp cairn.keytab /etc/cairn-appliance/ && sudo chmod 600 /etc/cairn-appliance/cairn.keytab
-sudo ./preflight.sh
+sudo ./bootstrap.sh                        # installs, creates /etc/cairn-appliance (700)
+sudo vi /etc/cairn-appliance/settings.env  # realm UPPER CASE, hosts lower
+sudo ./enroll.sh                           # keypair generated here, never transmitted
+read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD   # lab only
+sudo -E ./preflight.sh                     # -E or the credential does not survive
 ```
 
 ## What each answer means
 
 | Line | Means |
 | --- | --- |
-| `FOUND: joined through realmd` | The domain manages this credential. Revoking it is disabling the computer object |
-| `NOT JOINED` | A keytab somebody placed. Fine for a lab instrument; **not** a solution to the credential problem. Blocks nothing |
-| `FOUND: a ticket was issued` | Kerberos works. The keytab matches the account and the clock is close enough |
-| `REFUSED: no ticket` | Password changed since the keytab was made, or clock skew. Regenerate the keytab first |
+| `no keytab, no stored password` | Nothing durable on the box. **The good outcome** |
+| `REFUSING TO CONTINUE. A durable credential is on this appliance` | A keytab or stored password was found. Remove it; if a password, treat it as disclosed |
+| `not enrolled: no appliance key` | Run `enroll.sh` |
+| `CREDENTIAL SOURCE: this operator's shell` | The lab path, working as intended. **Never at a customer** |
+| `CREDENTIAL SOURCE: the portal` | The real path. The portal half is not built, so step 1 will report it had none |
+| `FOUND: a ticket was issued` | Kerberos works from an unjoined host, from a memory-backed cache |
+| `REFUSED: no ticket` | Password, realm case, or a clock more than five minutes out |
 | `FOUND: the directory answered` | The account can read AD |
 | `REFUSED` on LDAP | The bind or the read failed. The reason is printed above the line |
 | `FOUND: N zone(s)` | DNS is directory-integrated and readable |
@@ -53,22 +60,20 @@ missing a DHCP server or a zone. It cannot know. It prints what answered.
 **Nothing is submitted anywhere.** Preflight reads. It does not collect and it
 does not upload.
 
-## The keytab, and the one thing worth testing in the lab
+## The credential, in four lines
 
-**What ships is a deferral, not a solution.** A keytab at 600 in a 700
-directory, with preflight refusing to run if either is wider, constrains which
-local users can read it. It does not make the credential managed: it is
-long-lived, the client's domain does not manage it, it does not rotate, and
-revoking it means knowing it exists.
+**It is not on this box.** The customer enters it in the portal; the appliance
+fetches it per run, holds it in a memory-backed Kerberos cache, and drops it.
+Revocation is one action in the portal.
 
-**The candidate answer is a real domain join** — `realmd` and `adcli`. The host
-gets a machine account, the join tooling creates and rotates the keytab, and
-revocation is disabling the computer object in AD. **Still a keytab on disk,
-still not a gMSA**, but managed by the domain rather than by nobody.
+**The appliance authenticates with a keypair generated here at enrolment**, not
+a bearer token. The public half is registered; the private half never leaves.
+A token would exist in several places and could leak from any of them; a key
+generated here exists in one, and the portal cannot leak what it never had.
 
-Test it alongside the four capabilities. If it works, the objection that chose
-Windows is answered and the decision genuinely changes. If it does not, the
-objection holds and this stays a lab instrument.
+**It is not joined to the domain, and will not be.** A collector must not be a
+member of the trust boundary it reads.
 
-If a review will not accept a keytab even under a machine account, the answer
-is a Windows collector, not an argument.
+**The residual, which is the floor rather than a flaw:** during a run the
+credential is in memory, so a compromised appliance can capture it. That is
+equally true of a gMSA on Windows, and what is captured is read-only.

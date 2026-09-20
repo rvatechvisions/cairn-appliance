@@ -23,7 +23,7 @@ membership is `DHCP Users`. Five of six capabilities answered.
 | Active Directory over LDAP | **Proven** — bound read, SASL SSF 256 |
 | DNS zones in the directory | **Proven** — 2 zones readable |
 | Authorised DHCP servers | **Proven** — `CN=NetServices` read, 2 entries |
-| DHCP over MS-DHCPM | **Not proven** — the probe has never compiled; see below |
+| DHCP over MS-DHCPM | **Not proven** — reaches the service and is refused the read; see below |
 
 **This answers the question `SPIKE-LINUX-DHCP-2026-09-19.md` was reopened for.**
 A Linux box outside the trust boundary can read a directory a district actually
@@ -31,10 +31,37 @@ uses. The credential model held throughout: the password existed in one
 process, the ticket in one tmpfs cache removed at exit, and nothing on the
 domain was changed by any of it.
 
-**What is not proven is as important.** The MS-DHCPM probe has still never run,
-so *reading leases over RPC* is untested — and that is the one capability the
-collector most needs. Four of the five that passed are LDAP reads, which is a
-narrower claim than "the appliance works".
+**What is not proven is as important.** Reading leases over MS-DHCPM is still
+untested, and it is the one capability the collector most needs. Four of the
+five that passed are LDAP reads, which is a narrower claim than "the appliance
+works".
+
+**Where the DHCP probe actually stands**, because "not proven" covers a wide
+range and this end of it is narrow:
+
+| | |
+| --- | --- |
+| Compiles, against go-msrpc v1.6.4 | Yes |
+| Endpoint mapper resolves the dynamic port | Yes |
+| Kerberos, from the tmpfs ccache | Yes |
+| MS-DHCPM binds, both interfaces | Yes |
+| `R_DhcpEnumSubnets` dispatched | Yes |
+| The server returns the scopes | **No — `ERROR_ACCESS_DENIED`** |
+
+**And the account is not the problem, which is the part that took longest to
+establish.** `svc-cairn` holds `Domain Users` and `DHCP Users` and nothing
+else, and from Windows over the network — `runas /netonly`, so no logon rights
+anywhere — both `Get-DhcpServerv4Scope` and `netsh dhcp server show scope`
+returned the scope. The grant is sufficient. Microsoft's client can read what
+this one cannot, so the difference is in how this asks.
+
+**Named pipes are not the answer either, and the reason is worth recording.**
+`ncacn_np` is RPC over SMB, so it needs `cifs/<host>` rather than `host/<host>`
+— but supplying it changes nothing: the KDC error reads *requesting for :* with
+an empty service name, because `dcerpc.WithTargetName` configures the RPC
+security and **SMB session setup negotiates separately**. Wiring that needs
+`WithSMBDialer` and is a larger change than a flag. Both principals exist on
+the domain; `kvno` confirmed `ldap/`, `host/` and `cifs/`.
 
 **Two findings from that run worth keeping**, both of which cost an hour and
 neither of which is discoverable from documentation:

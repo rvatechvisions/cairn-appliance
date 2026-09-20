@@ -96,11 +96,82 @@ it gives says nothing about clocks.
 
 ### Get the appliance onto it
 
+**Copy it from the workstation. Do not clone it onto the appliance**, and the
+reason is the design rather than convenience.
+
+This repository is private, and GitHub stopped accepting passwords over HTTPS,
+so `git clone https://…` prompts and then fails whatever you type — it is not
+asking for something you have. The ways to make that work all end the same way:
+a GitHub credential, sitting on the box.
+
+**That box is the one machine in this design that is supposed to hold nothing.**
+*A collector must not be a member of the trust boundary it reads*, and the
+credential model underneath it is that nothing durable lives on the appliance —
+the client's credential arrives per run, is used from memory, and is dropped.
+A long-lived token for our own source control would be the only durable secret
+on a machine whose whole argument is that it has none.
+
+It is also 73 KB of shell scripts that are already on the machine you are
+sitting at.
+
+**On the workstation**, in Git Bash:
+
 ```bash
-sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/rvatechvisions/cairn-appliance.git
-cd cairn-appliance
+cd /c/dev/cairn-appliance
+git archive --format=tar.gz -o /tmp/cairn-appliance.tgz HEAD
+sha256sum /tmp/cairn-appliance.tgz
+scp /tmp/cairn-appliance.tgz <you>@<vm-address>:/tmp/
 ```
+
+`git archive` takes the tracked files at `HEAD` and nothing else — no `.git`,
+no scratch files — and writes the bytes the index holds, which is what keeps
+the line-ending check below true.
+
+**On the VM:**
+
+```bash
+sha256sum /tmp/cairn-appliance.tgz
+mkdir -p ~/cairn-appliance && tar -xzf /tmp/cairn-appliance.tgz -C ~/cairn-appliance
+cd ~/cairn-appliance
+```
+
+**Check the two hashes match before going on.** A truncated copy extracts
+without complaining and is indistinguishable from a good one until something
+halfway through behaves oddly.
+
+**Then check the line endings, because this failure lies about its cause:**
+
+```bash
+file *.sh
+```
+
+Every one must read `Bourne-Again shell script`. If any says **`with CRLF line
+terminators`**, re-copy rather than continuing — a carriage return on the
+shebang makes Linux report *no such file or directory* for a file that is
+plainly there, and the hour goes on the path rather than on the byte.
+`.gitattributes` pins `*.sh` to LF so `git archive` cannot produce this; a copy
+made some other way can.
+
+<details>
+<summary>If you would rather have git on the box anyway</summary>
+
+Then it is a deliberate choice with a cost rather than a default. `gh auth
+login` completes headless through a device code entered on another machine, and
+`gh repo clone rvatechvisions/cairn-appliance` works afterwards. The cost is
+the credential above, so remove it when you are finished:
+
+```bash
+gh auth logout
+```
+
+The other option is to make this repository public, which removes the friction
+permanently and is **your call rather than a step in a guide**. Nothing in here
+is a secret — `.gitignore` was written before any other file and no keytab,
+password or client name has ever been in it — but it is still a published
+description of how we read a customer's directory, and publishing is not
+reversible in the way deleting a file is.
+
+</details>
 
 ---
 

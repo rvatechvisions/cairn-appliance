@@ -201,8 +201,16 @@ distinction this project already draws for `create-app-registration.ps1`.
 
 Three steps, in order, and the first contacts nothing.
 
+**All three are written to run as root**, because a minimal Debian or Ubuntu
+image ships no `sudo` — and there `sudo ./bootstrap.sh` fails with *command not
+found*, which reads as the script being missing when it is `sudo` that is. As a
+normal user, prefix each with `sudo`, and use **`sudo -E`** for `preflight.sh`
+or the credential does not survive into the elevated environment. No script
+calls `sudo` itself, and `bootstrap.sh` checks `id -u` and refuses if you are
+not root.
+
 ```
-sudo ./bootstrap.sh
+./bootstrap.sh
 ```
 
 Installs `krb5-user`, `ldap-utils`, Go and `jq`; creates `/etc/cairn-appliance`
@@ -227,19 +235,23 @@ Then fill in `/etc/cairn-appliance/settings.env` — realm in **upper case**,
 host names in lower — and give this appliance its identity:
 
 ```
-sudo ./enroll.sh
+./enroll.sh
 ```
 
 It generates the keypair here and prints the public half. **The portal side of
 enrolment is not built**, so it says so rather than implying it registered.
 
 ```
-sudo -E ./preflight.sh
+read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
+./preflight.sh
 ```
 
-**`sudo -E`, not plain `sudo`.** Without it the credential does not survive
-into the elevated environment and step 1 reports it had none — which is true,
-and is not what you were trying to find out.
+**`read -rs` rather than typing the password into the command**, so it reaches
+neither the shell history nor the process table. `CAIRN_PASSWORD` is the **lab**
+path; in production the appliance authenticates with the key `enroll.sh`
+generated, fetches the credential from the portal per run, and holds it in
+memory. There is deliberately no password in `settings.env` — preflight refuses
+to start if it finds one there.
 
 ---
 

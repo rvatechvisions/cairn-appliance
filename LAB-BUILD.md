@@ -9,6 +9,19 @@ creates one read-only account, and runs three commands.
 
 **Budget half an hour.** Most of it is the Debian install.
 
+> **Every command on the Linux box in this guide is written to be run as root**,
+> because a minimal Debian or Ubuntu image does not ship `sudo` — and on such a
+> box `sudo ./bootstrap.sh` fails with **command not found**, which reads as the
+> script being missing when it is `sudo` that is.
+>
+> **If you are a normal user with `sudo`**, put `sudo` in front of each one, and
+> use **`sudo -E`** for `preflight.sh` — without `-E` the credential does not
+> survive into the elevated environment, and step 1 reports that it had none,
+> which is true and is not what you were trying to find out.
+>
+> No script here calls `sudo` itself, and `bootstrap.sh` checks `id -u` and
+> refuses if you are not root, so nothing has to be guessed at.
+
 ---
 
 ## What this is, and why it is RVA's own domain rather than a built one
@@ -105,7 +118,7 @@ it gives says nothing about clocks.
 **This repository is public, so the clone needs no login and no credential:**
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git
+apt-get update && apt-get install -y git
 git clone https://github.com/rvatechvisions/cairn-appliance.git
 cd cairn-appliance
 ```
@@ -277,8 +290,11 @@ run below.
 
 ## 4 — the three commands
 
+All three need root — see the note at the top of this guide if you are not
+already root.
+
 ```bash
-sudo ./bootstrap.sh
+./bootstrap.sh
 ```
 
 Installs `krb5-user`, `ldap-utils`, Go and `jq`; creates `/etc/cairn-appliance`
@@ -297,7 +313,7 @@ commits.
 Fill it in:
 
 ```bash
-sudo nano /etc/cairn-appliance/settings.env
+nano /etc/cairn-appliance/settings.env
 ```
 
 ```
@@ -321,7 +337,7 @@ on a first run.
 than one server, name them all — each is asked and answered separately.
 
 ```bash
-sudo ./enroll.sh
+./enroll.sh
 ```
 
 Generates this appliance's keypair and prints the public half. The private half
@@ -330,12 +346,18 @@ than implying it registered.
 
 ```bash
 read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD
-sudo -E ./preflight.sh
+./preflight.sh
 ```
 
-**`sudo -E`, not plain `sudo`.** Without `-E` the password does not survive
-into the elevated environment and step 1 reports it had no credential — which
-is true, and is not what you were trying to find out.
+**`read -rs` rather than typing the password into the command**, so it reaches
+neither your shell history nor the process table. It lives in this shell's
+environment for this run and nowhere else — there is deliberately no password
+in `settings.env`, and preflight refuses to start if it finds one there.
+
+`CAIRN_PASSWORD` is **the lab path and is named as such in the script**. The
+production path is the portal: the appliance authenticates with the key
+`enroll.sh` generated, fetches the credential per run, and holds it in memory.
+`CAIRN_PORTAL` stays empty until that side is built.
 
 ---
 

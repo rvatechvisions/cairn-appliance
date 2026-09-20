@@ -19,12 +19,17 @@ domain, not a forest you build.
 
 ## Run
 
+**As root.** A minimal image ships no `sudo`, and `sudo ./bootstrap.sh` there
+fails with *command not found* — which reads as the script being missing rather
+than `sudo`. As a normal user, prefix each with `sudo`, and use `sudo -E` for
+preflight or the credential does not survive into the elevated environment.
+
 ```
-sudo ./bootstrap.sh                        # installs, creates /etc/cairn-appliance (700)
-sudo vi /etc/cairn-appliance/settings.env  # realm UPPER CASE, hosts lower
-sudo ./enroll.sh                           # keypair generated here, never transmitted
+./bootstrap.sh                             # installs, creates /etc/cairn-appliance (700)
+vi /etc/cairn-appliance/settings.env       # realm UPPER CASE, hosts lower
+./enroll.sh                                # keypair generated here, never transmitted
 read -rs CAIRN_PASSWORD && export CAIRN_PASSWORD   # lab only
-sudo -E ./preflight.sh                     # -E or the credential does not survive
+./preflight.sh
 ```
 
 ## What each answer means

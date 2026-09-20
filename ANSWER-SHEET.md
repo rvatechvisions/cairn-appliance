@@ -27,15 +27,19 @@ sudo ./preflight.sh
 
 | Line | Means |
 | --- | --- |
+| `FOUND: joined through realmd` | The domain manages this credential. Revoking it is disabling the computer object |
+| `NOT JOINED` | A keytab somebody placed. Fine for a lab instrument; **not** a solution to the credential problem. Blocks nothing |
 | `FOUND: a ticket was issued` | Kerberos works. The keytab matches the account and the clock is close enough |
 | `REFUSED: no ticket` | Password changed since the keytab was made, or clock skew. Regenerate the keytab first |
 | `FOUND: the directory answered` | The account can read AD |
 | `REFUSED` on LDAP | The bind or the read failed. The reason is printed above the line |
 | `FOUND: N zone(s)` | DNS is directory-integrated and readable |
 | `NOT PRESENT` on DNS | The site's DNS is not AD-integrated. **A normal state, not a failure** |
+| `FOUND: the container answered` | The authorised-server list is readable. Needs only an authenticated user |
 | `bound: MS-DHCPM` then scopes | DHCP works. The account is in DHCP Users |
 | `REFUSED by <server>` | Usually not in DHCP Users. The error text names the call that failed |
 | `NOT ASKED` | Something it depends on failed, or nothing configured it. **Not the same as refused** |
+| `PARTLY PROVEN` | Some answered, some refused. **A result, not a failed run** — they need different rights, so one refusal does not stand in for the others |
 
 ## Three things to expect
 
@@ -49,13 +53,22 @@ missing a DHCP server or a zone. It cannot know. It prints what answered.
 **Nothing is submitted anywhere.** Preflight reads. It does not collect and it
 does not upload.
 
-## If a security review objects to the keytab
+## The keytab, and the one thing worth testing in the lab
 
-That is a reasonable objection: it is long-term key material in a file, where a
-gMSA on Windows would rotate itself and never touch disk. The bounds are that
-the account is an ordinary user plus DHCP Users — it cannot change anything
-anywhere, checkable in their own directory — and the file is 600 in a 700
-directory, with preflight refusing to run if either is wider.
+**What ships is a deferral, not a solution.** A keytab at 600 in a 700
+directory, with preflight refusing to run if either is wider, constrains which
+local users can read it. It does not make the credential managed: it is
+long-lived, the client's domain does not manage it, it does not rotate, and
+revoking it means knowing it exists.
 
-If that is not enough for them, the answer is a Windows collector, not an
-argument.
+**The candidate answer is a real domain join** — `realmd` and `adcli`. The host
+gets a machine account, the join tooling creates and rotates the keytab, and
+revocation is disabling the computer object in AD. **Still a keytab on disk,
+still not a gMSA**, but managed by the domain rather than by nobody.
+
+Test it alongside the four capabilities. If it works, the objection that chose
+Windows is answered and the decision genuinely changes. If it does not, the
+objection holds and this stays a lab instrument.
+
+If a review will not accept a keytab even under a machine account, the answer
+is a Windows collector, not an argument.

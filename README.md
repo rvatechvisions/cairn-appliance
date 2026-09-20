@@ -34,32 +34,68 @@ they both look like success — so the shape of the host is a prerequisite rathe
 than a preference, and `bootstrap.sh` prints what it finds without correcting
 it.
 
-### The trade this makes against a gMSA, stated plainly
+### The keytab is a deferral, not a solution — and it is the open question
 
 On Windows, a group managed service account is the better credential in every
-respect that matters: the domain rotates its password, nothing is ever written
-to disk, and no human sees the secret at any point. **A Linux host cannot hold
-one.** It authenticates with a keytab, which is a file, on disk, containing
-long-term key material for the account.
+respect that matters: the domain generates and rotates its password, nothing is
+ever written to disk, and no human sees the secret at any point. **A Linux host
+cannot hold one.** It authenticates with a keytab, which is a file, on disk,
+containing long-term key material for the account.
 
-So the trade is real and it is this:
+**That difference is why the 19 September spike chose Windows**, and the
+reasoning was sound. This appliance exists because Jackie asked for one, which
+is the event that spike named as its own condition for reopening — **not
+because anybody found a hole in the argument.**
 
-- **What is lost.** The credential is a file. Anybody who can read it can
-  authenticate as that account without a password and without a prompt. It does
-  not rotate on its own, and it stops working silently when somebody changes
-  the account's password.
-- **What bounds it.** The account is an ordinary domain user plus DHCP Users.
-  It can read; it cannot change anything, anywhere, and that is checkable in
-  the customer's own directory rather than on our word. The keytab is mode 600,
-  owned by root, in a directory that is mode 700, and `preflight.sh` **refuses
-  to run** if either is wider.
-- **Why it is worth making.** The alternative is a Windows host inside every
-  customer's network, which is a machine somebody has to patch, licence and
-  own. This is the same read, from a host that does less.
+So what this repository ships today has to be described accurately:
 
-If a customer's security review will not accept a keytab on disk, that is a
-reasonable position and the answer is a Windows collector rather than an
-argument.
+**A keytab at mode 600 in a directory at mode 700, with `preflight.sh`
+refusing to run if either is wider, is a lab-acceptable deferral. It is not a
+solution.** Those are the words, and they are chosen. File permissions
+constrain which local users can read the file. Every objection the spike raised
+still stands against it: the credential is long-lived, the client's domain does
+not manage it, it does not rotate, it fails silently when somebody changes the
+account's password, and revoking it means knowing it exists. Nothing about
+`chmod` would satisfy a review that objected to the thing itself.
+
+### The candidate answer, to be tested in the lab
+
+**Join the appliance to the domain with `realmd` and `adcli`.**
+
+The host gets a **machine account**. The join tooling creates and rotates the
+keytab rather than a person placing it. Revocation becomes *disable the
+computer object in Active Directory* — one action, in the client's own
+directory, on an object beside every other machine they own.
+
+**It is still a keytab on disk. It is not a gMSA**, and this README does not
+claim otherwise. What changes is who manages the file: it moves Linux from *a
+secret nobody manages* to *a domain member like any other*, which is exactly
+the axis the Windows decision turned on.
+
+Two honest outcomes, and neither is assumed:
+
+- **If the join works**, the objection is answered rather than standing, and
+  the Windows-versus-Linux question genuinely changes — it becomes a decision
+  about operating systems on their merits.
+- **If it does not**, the objection holds as written and **this appliance stays
+  a lab instrument** rather than becoming a product. The four capabilities
+  would still have been answered, which is worth having either way.
+
+**`preflight.sh` step 0 reports which of the two this host is** — joined, and
+by what mechanism, or authenticating from a keytab somebody placed. It blocks
+nothing: a hand-placed keytab is a perfectly good lab instrument. What it
+changes is what a passing run is worth as a *product* rather than as an
+experiment, and that distinction is invisible from the rest of the output.
+
+### What bounds the credential either way
+
+The account is an ordinary domain user plus DHCP Users. It can read; it cannot
+change anything, anywhere, and the client's own administrator can read that off
+the account rather than taking our word for it.
+
+If a customer's security review will not accept a keytab on disk even under a
+machine account, that is a reasonable position and the answer is a Windows
+collector rather than an argument.
 
 ---
 
@@ -94,16 +130,31 @@ sudo ./preflight.sh
 
 ## What preflight answers
 
-Four capabilities, asked and answered **separately**, because they fail for
-four different reasons and one verdict sends somebody to fix whichever they
-thought of first.
+Six things, asked and answered **separately**, because they fail for different
+reasons and one verdict sends somebody to fix whichever they thought of first.
 
 | | What it asks | What a failure usually means |
 | --- | --- | --- |
+| **0. Domain membership** | `realm list`, `adcli`, `/etc/krb5.keytab` | Not a failure. It reports whether the credential is managed by the domain or placed by hand |
 | **1. Kerberos** | `kinit -k -t` with the keytab | The account's password was changed, or the clock is out |
 | **2. AD over LDAP** | One bound read of the domain head | The account cannot read the directory |
 | **3. DNS in the directory** | `CN=MicrosoftDNS` under `DomainDnsZones` | The site's DNS is not directory-integrated — a normal state, not a failure |
-| **4. DHCP** | `R_DhcpEnumSubnets`, then leases from a sample of scopes | The account is not in **DHCP Users** |
+| **4. Authorised DHCP servers** | `CN=NetServices` in the configuration partition | Rare: this needs only an authenticated user |
+| **5. DHCP over MS-DHCPM** | `R_DhcpEnumSubnets`, then leases from a sample of scopes | The account is not in **DHCP Users** |
+
+### Partial credit, which is why nothing stops at the first failure
+
+**Steps 4 and 5 need different rights.** Reading the authorised-server list
+needs an authenticated user; the DHCP interface needs DHCP Users. So a host can
+pass everything up to and including step 4 and be refused at step 5 — and that
+is a useful result, not a failed run. It says the credential works, the
+directory is readable, and **one right is missing**, which is a different
+conversation from *this host cannot do the job*.
+
+The spike this came from ran its four steps in order and stopped at the first
+failure. That was right for a question of *does any of this work at all* and is
+wrong for a preflight, so every capability here is asked on its own and the
+summary says plainly when a run is partly proven.
 
 ### Three states, not two
 

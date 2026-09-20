@@ -94,6 +94,87 @@ case "$PERMS" in
 esac
 
 # ---------------------------------------------------------------------------
+# 0. Is this host a domain member, and by what mechanism?
+#
+# ## This is the step the product question turns on
+#
+# `SPIKE-LINUX-DHCP-2026-09-19.md` chose Windows over Linux on one argument:
+# a domain-joined Windows collector runs under a group Managed Service Account,
+# where Active Directory generates and rotates the password and nothing sits in
+# a file anybody has to protect. A Linux collector needs a keytab on disk --
+# a long-lived credential, on a machine the client's domain does not manage.
+#
+# **Mode 600 and a .gitignore entry do not answer that.** They constrain who on
+# this host can read the file. They are a lab-acceptable deferral, not a
+# solution, and this script says so rather than implying the problem is handled.
+#
+# The candidate answer is a real domain join: realmd and adcli give the host a
+# **machine account**, the join tooling creates and rotates the keytab, and
+# revocation becomes disabling the computer object in Active Directory. It is
+# still a keytab on disk -- it is not a gMSA, and nothing here should pretend
+# otherwise -- but it moves Linux from *a secret nobody manages* to *a domain
+# member like any other*.
+#
+# ## It reports, and decides nothing
+#
+# A ticket from a hand-placed keytab and a ticket from a machine account are
+# the same ticket to step 1 and a different product. So this step exists to
+# make the difference visible in the output, and it never blocks the steps
+# below: a host with a hand-placed keytab is a perfectly good lab instrument.
+# ---------------------------------------------------------------------------
+rule "0. Domain membership"
+capability_domain_join() {
+  local joined=0
+
+  if command -v realm >/dev/null 2>&1; then
+    local realms
+    realms="$(realm list --name-only 2>/dev/null)"
+    if [ -n "$realms" ]; then
+      say "FOUND: joined through realmd:"
+      printf '%s\n' "$realms" | sed 's/^/    /'
+      joined=1
+    else
+      say "realm is installed and this host is joined to nothing."
+    fi
+  else
+    say "realm(8) is not installed, so a realmd join cannot be detected."
+  fi
+
+  if command -v adcli >/dev/null 2>&1; then
+    say "adcli is available for a join."
+  else
+    say "adcli is not installed."
+  fi
+
+  # The machine account's own keytab, which is what a join writes. Distinct
+  # from CAIRN_KEYTAB, which is the one a person placed.
+  if [ -f /etc/krb5.keytab ]; then
+    say "a machine keytab exists at /etc/krb5.keytab, which a join writes."
+    joined=1
+  fi
+
+  say ""
+  if [ "$joined" -eq 1 ]; then
+    say "This host is a domain member. The credential below is managed by the"
+    say "  domain rather than placed by hand, and revoking it is disabling the"
+    say "  computer object in Active Directory."
+    say "  It is still a keytab on disk. It is not a gMSA."
+    FOUND=$((FOUND + 1))
+    return 0
+  fi
+
+  say "NOT JOINED: this host authenticates with a keytab somebody placed."
+  say "  That is acceptable for a lab instrument and is NOT a solution to the"
+  say "  credential problem: the file is long-lived, the domain does not manage"
+  say "  it, it does not rotate, and revoking it means knowing it exists."
+  say "  Nothing below is blocked by this. What it changes is what a passing"
+  say "  run is worth as a product rather than as an experiment."
+  UNASKED=$((UNASKED + 1))
+  return 1
+}
+capability_domain_join
+
+# ---------------------------------------------------------------------------
 # 1. Kerberos
 # ---------------------------------------------------------------------------
 rule "1. Kerberos"
@@ -220,13 +301,68 @@ capability_dns() {
 capability_dns
 
 # ---------------------------------------------------------------------------
-# 4. DHCP over MS-DHCPM
+# 4. The authorised DHCP servers, from the directory
+#
+# ## This is the capability that earns partial credit, and it is why the
+# ## summary below counts rather than stopping
+#
+# Reading `CN=NetServices` needs **only an authenticated user**. The MS-DHCPM
+# interface below needs the account to be in **DHCP Users**. They are different
+# rights, so this can succeed on a host where the next one refuses outright --
+# and a run that proves Kerberos, the directory, DNS and this, and then fails
+# DHCP, is a useful result rather than a failed run. It says the credential
+# works, the directory is readable, and one right is missing, which is a
+# different conversation from *this host cannot do the job*.
+#
+# The spike this came from stopped at the first failure. That was right for a
+# question of *does any of this work at all* and is wrong here.
+# ---------------------------------------------------------------------------
+rule "4. Authorised DHCP servers, from the directory"
+capability_authorized_servers() {
+  if [ "$LDAP_OK" -ne 0 ]; then
+    say "NOT ASKED: the directory did not answer."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local dn="CN=NetServices,CN=Services,CN=Configuration,${BASE_DN}"
+  say "looking under: ${dn}"
+
+  local out
+  out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$dn" \
+          -s sub '(objectClass=dHCPClass)' dhcpServers name 2>&1)"
+  local status=$?
+
+  if [ $status -ne 0 ]; then
+    printf '%s\n' "$out" | sed 's/^/  /'
+    say "REFUSED: the authorised-server list could not be read."
+    say "  This needs only an authenticated user, so a refusal here is a"
+    say "  different fact from the DHCP interface refusing below."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  # Counted and printed, never compared against an expectation. What is correct
+  # for a site is not something preflight can know.
+  local entries
+  entries="$(printf '%s\n' "$out" | grep -c '^dn:' || true)"
+  say "FOUND: the container answered, ${entries} entr(ies) under it."
+  printf '%s\n' "$out" | sed 's/^/  /' | head -40
+  say "  The authorised list is what the directory says; whether each of those"
+  say "  servers still exists is a separate question this does not ask."
+  FOUND=$((FOUND + 1))
+  return 0
+}
+capability_authorized_servers
+
+# ---------------------------------------------------------------------------
+# 5. DHCP over MS-DHCPM
 #
 # The only capability here that is not a shell tool. It is a small Go program
 # using go-msrpc, calling R_DhcpEnumSubnets and R_DhcpEnumSubnetClientsV5 --
 # both reads, and the pair the collector itself would use.
 # ---------------------------------------------------------------------------
-rule "4. DHCP over MS-DHCPM"
+rule "5. DHCP over MS-DHCPM"
 capability_dhcp() {
   if [ "$KERBEROS_OK" -ne 0 ]; then
     say "NOT ASKED: there is no ticket."
@@ -289,6 +425,26 @@ say "something it depends on failed, or because nothing configured it -- is not"
 say "a capability that was tried and refused, and only one of those is evidence"
 say "about the customer's network."
 say ""
+
+#
+# **Partial credit, stated rather than left to be inferred from the counts.**
+#
+# The capabilities above need different rights: reading the authorised-server
+# list needs an authenticated user, the DHCP interface needs DHCP Users. So a
+# run can prove most of what matters and fail the last one, and that is a
+# result worth carrying back rather than a wasted trip. Saying so here is the
+# difference between an operator reading the output as *one right is missing*
+# and reading it as *this does not work*.
+#
+if [ "$FOUND" -gt 0 ] && [ "$REFUSED" -gt 0 ]; then
+  say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered and ${REFUSED} refused."
+  say "  That is a result, not a failed run. The ones that answered are proven"
+  say "  on this host with this credential, and what they proved stays true"
+  say "  whatever refused after them -- these capabilities need different"
+  say "  rights, so one refusal never stands in for the others."
+  say ""
+fi
+
 say "Nothing was submitted anywhere, and nothing on the domain was changed."
 
 # Exit non-zero only when something was genuinely refused. Nothing-asked is not

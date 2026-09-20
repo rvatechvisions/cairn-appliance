@@ -54,9 +54,54 @@ than waiting for input nobody can supply.
 | `NOT PRESENT` on DNS | The site's DNS is not AD-integrated. **A normal state, not a failure** |
 | `FOUND: the container answered` | The authorised-server list is readable. Needs only an authenticated user |
 | `bound: MS-DHCPM` then scopes | DHCP works. The account is in DHCP Users |
-| `REFUSED by <server>` | Usually not in DHCP Users. The error text names the call that failed |
+| `REFUSED by <server>` with `ERROR_ACCESS_DENIED` | **The server answered.** Mapper, bind, Kerberos and dispatch all worked — see below |
 | `NOT ASKED` | Something it depends on failed, or nothing configured it. **Not the same as refused** |
 | `PARTLY PROVEN` | Some answered, some refused. **A result, not a failed run** — they need different rights, so one refusal does not stand in for the others |
+
+## `ERROR_ACCESS_DENIED` on DHCP: what it is, and the two open candidates
+
+**Read this before concluding anything from the word REFUSED.** On RVA's own
+domain, 20 September 2026, every layer under the read worked: the endpoint
+mapper resolved the dynamic port, DHCPSRV **and** DHCPSRV2 bound, Kerberos
+sealed the transport, and `R_DhcpEnumSubnets` was dispatched. **The DHCP
+service then made an authorization decision.** That is an access check, not a
+protocol failure — go-msrpc does this, and Linux does this.
+
+**The account is not obviously the cause**, which is what makes the rest open:
+`svc-cairn` holds `Domain Users` and `DHCP Users` and nothing else, and the
+same credential reads the same server from Windows over the network.
+
+**Two candidates, neither asserted, both one command to test.**
+
+**1. The DHCP service has not re-read its group SIDs.** Membership travels in
+the Kerberos ticket and preflight takes a fresh one each run — so nothing on
+the appliance needs restarting. **That is not the same as nothing needing a
+restart.** The DHCP Server service resolves the `DHCP Users` and `DHCP
+Administrators` SIDs on its own schedule, and an account added afterwards is a
+documented cause of exactly this refusal *with the membership present*.
+
+```powershell
+Restart-Service DHCPServer     # on the DHCP server
+```
+
+Re-run preflight. **If it answers, that is the cause and it belongs in the
+onboarding runbook**, because every future client hits it.
+
+**2. `DHCP Users` may not be sufficient for the enumerate calls.** Add the
+account to `DHCP Administrators` temporarily and re-run.
+
+```powershell
+Add-ADGroupMember -Identity "DHCP Administrators" -Members svc-cairn
+# ... re-run preflight, then ...
+Remove-ADGroupMember -Identity "DHCP Administrators" -Members svc-cairn
+```
+
+**If that is what it takes, this is a product constraint rather than a lab
+detail.** The read-only story rests on `DHCP Users` being enough; if
+`R_DhcpEnumSubnets` needs `DHCP Administrators`, **the appliance cannot be
+read-only on DHCP** and what a district is asked to grant changes. Find out
+where being wrong is cheap, and **record the answer either way** — *`DHCP
+Users` is sufficient* is worth as much written down as the alternative.
 
 ## Three things to expect
 

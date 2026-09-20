@@ -162,9 +162,19 @@ func main() {
 				"\n"+
 				"    Add-ADGroupMember -Identity \"DHCP Users\" -Members %s\n"+
 				"\n"+
-				"  Membership travels in the Kerberos ticket and preflight takes a fresh\n"+
-				"  one each run, so adding it is enough -- there is nothing to restart\n"+
-				"  here and nothing to sign out of.\n"+
+				"  Membership travels in the Kerberos ticket and preflight takes a\n"+
+				"  fresh one each run, so nothing on THIS box needs restarting.\n"+
+				"\n"+
+				"  THAT IS NOT THE SAME AS NOTHING NEEDING A RESTART. The DHCP Server\n"+
+				"  service resolves the DHCP Users and DHCP Administrators SIDs on its\n"+
+				"  own schedule, and an account added after it did so is a documented\n"+
+				"  cause of exactly this refusal WITH the membership present. Neither\n"+
+				"  way is asserted here. The test is one command on the DC:\n"+
+				"\n"+
+				"    Restart-Service DHCPServer\n"+
+				"\n"+
+				"  Re-run afterwards. If it answers, that was the cause and it belongs\n"+
+				"  in onboarding, because every future client hits it.\n"+
 				"\n"+
 				"  IF IT IS ALREADY THERE, this is not the answer and the refusal is\n"+
 				"  something else. Seen on RVA's own domain, 20 September 2026, with the\n"+
@@ -186,7 +196,16 @@ func main() {
 				"  Refused there too, and the grant is genuinely not sufficient on this\n"+
 				"  server, which is a question for whoever administers it. Answered\n"+
 				"  there, and the account can read DHCP while THIS probe cannot, which\n"+
-				"  makes it ours.\n",
+				"  makes it ours.\n"+
+				"\n"+
+				"  AND ONE MORE, WHICH IS A PRODUCT QUESTION RATHER THAN A LAB ONE.\n"+
+				"  Add the account to DHCP Administrators temporarily and re-run. If\n"+
+				"  that is what R_DhcpEnumSubnets takes on this server, then this\n"+
+				"  appliance CANNOT BE READ-ONLY ON DHCP, and what a district is asked\n"+
+				"  to grant changes. Find out on a domain where being wrong is cheap,\n"+
+				"  and record the answer either way -- DHCP Users is sufficient is\n"+
+				"  worth as much written down as the alternative. Remove the\n"+
+				"  membership afterwards; it is a test, not a configuration.\n",
 				account, account, account)
 		}
 		os.Exit(1)

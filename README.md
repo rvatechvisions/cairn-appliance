@@ -25,6 +25,19 @@ membership is `DHCP Users`. Five of six capabilities answered.
 | Authorised DHCP servers | **Proven** — `CN=NetServices` read, 2 entries |
 | DHCP over MS-DHCPM | **Not proven** — reaches the service and is refused the read; see below |
 
+### The DHCP refusal is an access check, not a protocol failure
+
+**Said first, because a run that ends in REFUSED reads as *Linux cannot do
+this* and it is the opposite.** On that same run: the endpoint mapper resolved
+the dynamic port, **DHCPSRV and DHCPSRV2 both bound**, Kerberos sealed the
+transport from a ticket in a tmpfs cache, and `R_DhcpEnumSubnets` was
+dispatched. The DHCP service then made an authorization decision.
+
+**Every layer works. go-msrpc works. What is unresolved is a grant**, and the
+two candidates — a service that has not re-read its group SIDs, and `DHCP
+Users` possibly not being sufficient for the enumerate calls — are in
+`ANSWER-SHEET.md` with a one-command test each.
+
 **This answers the question `SPIKE-LINUX-DHCP-2026-09-19.md` was reopened for.**
 A Linux box outside the trust boundary can read a directory a district actually
 uses. The credential model held throughout: the password existed in one

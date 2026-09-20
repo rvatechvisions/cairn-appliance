@@ -847,10 +847,42 @@ capability_authorized_servers() {
 
   # Counted and printed, never compared against an expectation. What is correct
   # for a site is not something preflight can know.
-  local entries
+  #
+  # AN ENTRY UNDER THIS CONTAINER IS NOT THE SAME THING AS AN AUTHORISED
+  # SERVER, and the difference would have shipped a finding that fires at every
+  # site on earth. Jackie read the RVA run on 20 September 2026: the filter
+  # `(objectClass=dHCPClass)` returned TWO entries and ONE server.
+  #
+  #   CN=DhcpRoot              -- no dhcpServers attribute, no DNS name
+  #   CN=dc.rvatechvisions.com -- dhcpServers: i10.200.2.4$rcn=dc...$
+  #
+  # `DhcpRoot` is a container Microsoft creates in every domain. It is a
+  # dHCPClass object, so it matches the filter, and it resolves to nothing --
+  # so anything that enumerates children and probes each name would report it
+  # as a registration answering nothing. **At 100% of sites.**
+  #
+  # NOT-A-SERVER AND A SERVER THAT FAILED TO RESOLVE ARE DIFFERENT STATES, and
+  # only the second is a finding. That is *unknown is not zero* pointed at a
+  # directory object: an entry carrying no `dhcpServers` attribute is not a
+  # server whose name is dead, it is not a server.
+  #
+  # The PowerShell collector is not affected -- it reads `Get-DhcpServerInDC`,
+  # which is the authorised list rather than the container -- so this is a
+  # hazard for the appliance census only, and it is separated here at the read
+  # rather than left for the receiver to filter.
+  local entries servers
   entries="$(printf '%s\n' "$out" | grep -c '^dn:' || true)"
-  say "FOUND: the container answered, ${entries} entr(ies) under it."
+  servers="$(printf '%s\n' "$out" | grep -c '^dhcpServers:' || true)"
+  say "FOUND: ${entries} entr(ies) under the container, ${servers} carrying a"
+  say "  dhcpServers attribute."
   printf '%s\n' "$out" | sed 's/^/  /' | head -40
+  say ""
+  say "  AN ENTRY IS NOT A SERVER. CN=DhcpRoot is a container Microsoft creates"
+  say "  in every domain; it matches this filter and carries no dhcpServers"
+  say "  attribute. Only the ${servers} above are authorised servers. An entry"
+  say "  with no such attribute is NOT-A-SERVER, which is a different state from"
+  say "  a server whose name does not resolve, and only the second is a finding."
+  say ""
   say "  The authorised list is what the directory says; whether each of those"
   say "  servers still exists is a separate question this does not ask."
   FOUND=$((FOUND + 1))

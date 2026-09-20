@@ -55,6 +55,29 @@ anywhere — both `Get-DhcpServerv4Scope` and `netsh dhcp server show scope`
 returned the scope. The grant is sufficient. Microsoft's client can read what
 this one cannot, so the difference is in how this asks.
 
+**Ruled out, each by a read rather than by reasoning:**
+
+- **The account.** `DHCP Users` is present and Microsoft's own client reads the
+  server with that credential.
+- **The transport.** See named pipes below.
+- **The request.** `R_DhcpEnumSubnets` was going out with an empty
+  `ServerIPAddress`, visible in the wire log. Filling it changed nothing. The
+  specification calls the parameter unused and this server agrees.
+
+**What is left is the security layer**, and it is a narrow question: what
+identity and authentication service the DHCP server sees from this client
+against what it sees from Microsoft's. The wire log shows the bind
+authenticating cleanly — `auth_length` 1488, acknowledged 140, `auth3` 93 —
+both interfaces taking their own security context through `alter_context`, and
+the call going out sealed at `auth_length` 76. The server authenticates this
+account and refuses the read.
+
+The two candidates, neither yet read: whether the PAC reaches the server's
+access check, so that `DHCP Users` membership is visible in the token it
+builds; and whether `ssp.KRB5` presents differently from the SPNEGO Windows
+negotiates. **Both are answerable from go-msrpc's source and neither needs a
+domain**, which is where this goes next.
+
 **Named pipes are not the answer either, and the reason is worth recording.**
 `ncacn_np` is RPC over SMB, so it needs `cifs/<host>` rather than `host/<host>`
 — but supplying it changes nothing: the KDC error reads *requesting for :* with

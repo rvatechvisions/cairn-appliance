@@ -102,27 +102,40 @@ it gives says nothing about clocks.
 
 ### Get the appliance onto it
 
-**Copy it from the workstation. Do not clone it onto the appliance**, and the
-reason is the design rather than convenience.
+**This repository is public, so the clone needs no login and no credential:**
 
-This repository is private, and GitHub stopped accepting passwords over HTTPS,
-so `git clone https://…` prompts and then fails whatever you type — it is not
-asking for something you have. The ways to make that work all end the same way:
-a GitHub credential, sitting on the box.
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/rvatechvisions/cairn-appliance.git
+cd cairn-appliance
+```
 
-**That box is the one machine in this design that is supposed to hold nothing.**
-*A collector must not be a member of the trust boundary it reads*, and the
-credential model underneath it is that nothing durable lives on the appliance —
-the client's credential arrives per run, is used from memory, and is dropped.
-A long-lived token for our own source control would be the only durable secret
-on a machine whose whole argument is that it has none.
+That is the whole step. Skip to section 2 unless the VM has no route to the
+internet.
 
-It is also 73 KB of shell scripts that are already on the machine you are
-sitting at.
+**Why it is public, stated rather than left as a default.** Jackie's decision,
+20 September 2026. Every way of cloning a *private* repository ends with a
+GitHub credential on the box — and that box is the one machine in this design
+meant to hold nothing. *A collector must not be a member of the trust boundary
+it reads*, and underneath it the credential model is that nothing durable lives
+on the appliance: the client's credential arrives per run, is used from memory,
+and is dropped. A long-lived token for our own source control would have been
+the only durable secret on a machine whose whole argument is that it has none.
+Publishing the source removed the credential rather than managing it.
 
-**On the workstation. Both shells are given, because this machine has two and
-the commands are not interchangeable** — `/tmp` is not a path in PowerShell and
-`sha256sum` is not a command there.
+Nothing here is a secret: `.gitignore` was written before any other file, and
+no keytab, password or credential has ever been committed. **One client's name
+was**, in this document, and it was removed in `ae42b40` — the working tree is
+clean and the history is what it is.
+
+<details>
+<summary>If the VM has no route to the internet, copy it from the workstation</summary>
+
+It is 73 KB of shell scripts already on the machine you are sitting at.
+
+**Both shells are given, because this workstation has two and the commands are
+not interchangeable** — `/tmp` is not a path in PowerShell and `sha256sum` is
+not a command there.
 
 PowerShell:
 
@@ -173,26 +186,9 @@ terminators`**, re-copy rather than continuing — a carriage return on the
 shebang makes Linux report *no such file or directory* for a file that is
 plainly there, and the hour goes on the path rather than on the byte.
 `.gitattributes` pins `*.sh` to LF so `git archive` cannot produce this; a copy
-made some other way can.
-
-<details>
-<summary>If you would rather have git on the box anyway</summary>
-
-Then it is a deliberate choice with a cost rather than a default. `gh auth
-login` completes headless through a device code entered on another machine, and
-`gh repo clone rvatechvisions/cairn-appliance` works afterwards. The cost is
-the credential above, so remove it when you are finished:
-
-```bash
-gh auth logout
-```
-
-The other option is to make this repository public, which removes the friction
-permanently and is **your call rather than a step in a guide**. Nothing in here
-is a secret — `.gitignore` was written before any other file and no keytab,
-password or client name has ever been in it — but it is still a published
-description of how we read a customer's directory, and publishing is not
-reversible in the way deleting a file is.
+made some other way can. **A clone does not need this check** — git writes LF
+on a Linux checkout from the same attribute — which is one more reason the
+clone is the default path.
 
 </details>
 

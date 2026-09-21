@@ -113,21 +113,60 @@ cannot be pinned to one*.
 
 ```sh
 cd preflight        # THE MODULE IS HERE, NOT THE REPOSITORY ROOT
-go mod tidy
 go build -o preflight .
 ```
+
+**DO NOT RUN `go mod tidy`. Corrected 21 September 2026, after it cost an
+hour in the middle of the first production enrolment.**
+
+This step used to say `go mod tidy` and then `go build`, and that was right
+while `go.mod` pinned nothing. **It stopped being right at `5fad13c`**, which
+resolved the versions once and committed `go.mod` and `go.sum` — which is what
+turns a resolution into a pin. `go.mod` says so in its own comment, directly
+above the require blocks: *do not hand-edit go.sum*.
+
+**What running it now costs.** `tidy` rewrites `go.mod` from the local module
+cache, so the file differs from the committed one and the next `git pull
+--ff-only` aborts with *your local changes would be overwritten by merge*.
+On the lab box it also left an untracked `go.sum` that blocked the same pull a
+second way. **Neither error mentions `tidy`**, so the reader is looking at git
+while the cause is three lines up in this document.
+
+**It is the superseded-instruction class in a numbered step**, which is the
+worst place for it: somebody setting a box up runs the steps and reads the
+paragraphs only when one fails. The pin landed, the prose around it was
+rewritten, and the command in the fence was not.
+
+**If you have already run it**, keep your copies rather than deleting them and
+restore the committed ones:
+
+```sh
+mkdir -p ~/cairn-tidy-artifacts
+cp preflight/go.mod ~/cairn-tidy-artifacts/go.mod.local
+mv preflight/go.sum ~/cairn-tidy-artifacts/ 2>/dev/null || true
+git checkout -- preflight/go.mod
+git pull --ff-only
+```
+
+**When `tidy` is genuinely needed**: only when an import changes, and then the
+rewritten `go.mod` and `go.sum` are committed in the same breath, so the pin
+moves deliberately rather than drifting per machine.
 
 **Every `go` command runs from `preflight/`.** From the repository root,
 `go build ./...` answers *directory prefix . does not contain main module*,
 which reads like a broken repository rather than a wrong directory. Observed on
 the lab VM.
 
-**`go mod tidy` comes first and it needs the network once.** `go.mod`
-deliberately pins nothing — the require line and the checksums are written from
-the imports on first build, which is the only way a version here is read rather
-than recalled. Without it, `go build` refuses with *missing go.sum entry* for
-every import, naming five packages that are all correct, and sends the reader to
-the imports instead of to the missing step.
+**`go.mod` pins every version and `go.sum` is committed beside it**, so a
+build needs the network only to fetch modules it does not already have, and
+never to decide which ones. That is the reverse of what this paragraph said
+before `5fad13c`: it read *`go.mod` deliberately pins nothing*, which was
+true of the design it described and false of the repository it sat in.
+
+The failure it warned about is still real and now has a different cause:
+`go build` refusing with *missing go.sum entry* for five correctly-imported
+packages means `go.sum` is missing or was moved aside, not that a step was
+skipped. Restore it from the repository rather than regenerating it.
 
 These are the same two commands `preflight.sh` runs, in the same order, from the
 same directory. **Running `preflight.sh` builds the probe too** — it always

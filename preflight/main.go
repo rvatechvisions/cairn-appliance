@@ -153,6 +153,20 @@ func main() {
 	transport := flag.String("transport", "ncacn_ip_tcp:",
 		"the RPC transport to request; Windows tools commonly use ncacn_np:")
 	showVersion := flag.Bool("version", false, "print the commit this binary was built from, and exit")
+
+	// Talking to the portal. Two verbs, because they are two different acts:
+	// one redeems a grant and one spends an identity.
+	//
+	// The registration key is an ARGUMENT and never a file. A key baked into
+	// something on the box is a key that gets forwarded, kept, and run
+	// somewhere else a year later.
+	portalURL := flag.String("portal", "", "the portal base URL, for -enrol or -fetch")
+	registrationKey := flag.String("enrol", "", "redeem this registration key and bind this appliance")
+	fetch := flag.Bool("fetch", false, "fetch the connection credential with a signed request")
+	fingerprint := flag.String("fingerprint", "", "the fingerprint this appliance is bound as, for -fetch")
+	keyFile := flag.String("keyfile", keyPath, "where this appliance keeps its private key")
+	agreement := flag.Bool("agreement-fixture", false,
+		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
 
 	// Answered before -server is required, because "what is this binary" must
@@ -160,6 +174,78 @@ func main() {
 	// on a box with no domain, which is where a build is verified.
 	if *showVersion {
 		fmt.Println(stamp())
+		return
+	}
+
+	// The portal verbs are answered before -server is required: enrolling and
+	// fetching a credential are about the portal, not about a DHCP server, and
+	// a box that has not been told its server yet is exactly the box being
+	// enrolled.
+	keyPath = *keyFile
+
+	if *agreement {
+		private, err := loadOrCreateKey()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+		if err := emitAgreementFixture(private); err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *registrationKey != "" || *fetch {
+		if *portalURL == "" {
+			fmt.Fprintln(os.Stderr, "preflight: -portal is required with -enrol or -fetch")
+			os.Exit(2)
+		}
+
+		private, err := loadOrCreateKey()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+
+		// Before anything is sent. A binary that cannot verify what it just
+		// signed would otherwise present as the portal refusing a good key.
+		if err := assertSigningKey(private); err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+
+		if *registrationKey != "" {
+			bound, err := enrol(*portalURL, *registrationKey, private)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			fmt.Println("enrolled")
+			fmt.Println("fingerprint:", bound)
+			fmt.Println("")
+			fmt.Println("Compare that against the fingerprint on the connection card.")
+			fmt.Println("They must match. That comparison is what catches a stolen key.")
+			return
+		}
+
+		if *fingerprint == "" {
+			fmt.Fprintln(os.Stderr, "preflight: -fingerprint is required with -fetch")
+			os.Exit(2)
+		}
+
+		username, password, err := fetchCredential(*portalURL, *fingerprint, private)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+
+		// The username, and that a password arrived. NEVER the password: a
+		// credential in a terminal buffer, a shell history and a run-command
+		// log is a smaller version of the thing this whole design is for.
+		fmt.Println("credential fetched")
+		fmt.Println("username:", username)
+		fmt.Printf("password:  %d characters, not printed\n", len(password))
 		return
 	}
 

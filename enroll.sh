@@ -52,14 +52,43 @@ if [ ! -d "$CONFIG_DIR" ]; then
 fi
 
 if [ -f "$KEY" ]; then
-  echo "This appliance is already enrolled."
+  # THE ALREADY-ENROLLED BRANCH TOLD THE OPERATOR TO DO TWO THINGS THEY
+  # CANNOT DO, and it is fixed here to the standard the fresh-run branch
+  # already holds: an appliance that printed a key and implied it had
+  # registered would be the most confidently wrong output this script could
+  # produce.
+  #
+  # It said "revoke this appliance in the portal" -- there is no portal record
+  # and no page, so that instruction names a thing that does not exist. And it
+  # said "delete both files", which contradicts the rule that nothing is
+  # deleted when it can be moved aside: a retired key is evidence about what
+  # was enrolled, and the one on the lab box was moved to
+  # /root/cairn-retired-keys rather than removed.
+  #
+  # The revoke step comes back when stage 3 lands, naming the actual page.
+  echo "This appliance already has a key."
   echo
-  echo "Its key is at ${KEY} and was generated here. There is deliberately no"
-  echo "way to re-issue it from the portal: a key the portal could reissue is a"
-  echo "key the portal has held, which is the property this design exists for."
+  echo "It is at ${KEY} and was generated here. There is deliberately no way"
+  echo "to re-issue it from the portal: a key the portal could reissue is a key"
+  echo "the portal has held, which is the property this design exists for."
   echo
-  echo "To replace it, revoke this appliance in the portal, delete both files"
-  echo "below, and run this again."
+  echo "THE PORTAL HOLDS NO RECORD OF IT YET. The enrolment endpoint is not"
+  echo "built, so there is nothing to revoke and nobody to tell. Having a key"
+  echo "here is not the same as being enrolled, and this script will not imply"
+  echo "otherwise."
+  echo
+  echo "To replace it, move the current pair aside and run this again:"
+  echo
+  echo "  mkdir -p /root/cairn-retired-keys && chmod 700 /root/cairn-retired-keys"
+  echo "  mv ${KEY} ${PUB} /root/cairn-retired-keys/"
+  echo "  $0"
+  echo
+  echo "Moved rather than deleted, deliberately: a retired key is the evidence"
+  echo "of what was enrolled, and it costs nothing to keep."
+  echo
+  echo "When the portal side exists this will say to revoke the appliance there"
+  echo "FIRST, and will name the page. It does not say that today because today"
+  echo "it would be an instruction nobody can follow."
 
   # The error stream is kept rather than discarded. A missing public half is
   # exactly the state the first version of this script produced, and sending

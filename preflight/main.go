@@ -104,6 +104,36 @@ import (
 	_ "github.com/oiweiwei/go-msrpc/msrpc/erref/win32"
 )
 
+// commit is the commit this binary was built from, set at link time with
+// -ldflags "-X main.commit=<sha>".
+//
+// EMPTY IS A REAL STATE AND IS REPORTED AS ONE. A binary built without the
+// stamp says so rather than printing something that looks like an answer --
+// "unstamped" is information and a blank line is not, and this is the one
+// question the binary can answer about itself with certainty.
+//
+// It is the input to the update decision: the appliance refuses to run bytes
+// whose digest does not match what the portal named, and a binary that cannot
+// say what it is gives the pin nothing to check against. A build that did not
+// stamp is refused by preflight.sh rather than shipped.
+var commit string
+
+// version is the tag, where a build had one. Same rules as commit.
+var version string
+
+// stamp is what -version prints and what a build check reads back.
+func stamp() string {
+	c := commit
+	if c == "" {
+		c = "unstamped"
+	}
+	v := version
+	if v == "" {
+		v = "no-tag"
+	}
+	return fmt.Sprintf("preflight %s %s", v, c)
+}
+
 func main() {
 	server := flag.String("server", "", "the DHCP server to ask, by name")
 	scopes := flag.Int("scopes", 3, "how many scopes to read leases from, for the probe")
@@ -122,7 +152,16 @@ func main() {
 	target := flag.String("target", "", "the service principal to request; default follows the transport")
 	transport := flag.String("transport", "ncacn_ip_tcp:",
 		"the RPC transport to request; Windows tools commonly use ncacn_np:")
+	showVersion := flag.Bool("version", false, "print the commit this binary was built from, and exit")
 	flag.Parse()
+
+	// Answered before -server is required, because "what is this binary" must
+	// be askable of a binary that cannot do anything else -- including one built
+	// on a box with no domain, which is where a build is verified.
+	if *showVersion {
+		fmt.Println(stamp())
+		return
+	}
 
 	if *server == "" {
 		fmt.Fprintln(os.Stderr, "preflight: -server is required")

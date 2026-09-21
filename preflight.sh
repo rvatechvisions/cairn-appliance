@@ -945,7 +945,17 @@ capability_dhcp() {
     return 1
   fi
 
-  if ! (cd "${HERE}/preflight" && go build -o preflight . 2>&1 | sed 's/^/  /'); then
+  # The commit is stamped in, and the stamp is READ BACK below.
+  #
+  # A binary that cannot say what it is gives the digest pin nothing to check
+  # against, and `-X main.commit=` fails SILENTLY: a wrong symbol path, a
+  # renamed variable or a quoting slip all produce a clean build and an empty
+  # stamp. That is *absence of output read as absence of finding* in a linker
+  # flag, so the build is not trusted to have done it.
+  local stamp_commit
+  stamp_commit="$(git -C "${HERE}" rev-parse HEAD 2>/dev/null || echo "")"
+
+  if ! (cd "${HERE}/preflight" && go build -ldflags "-X main.commit=${stamp_commit}" -o preflight . 2>&1 | sed 's/^/  /'); then
     say "REFUSED: the probe's dependencies resolved and it did not compile."
     say ""
     say "  THIS IS THE CODE, NOT THIS HOST. The probe compiled and ran on this"
@@ -965,6 +975,31 @@ capability_dhcp() {
     REFUSED=$((REFUSED + 1))
     return 1
   fi
+
+  # READ THE STAMP BACK, and refuse a build that did not take one.
+  #
+  # This is the one question the binary can answer about itself with
+  # certainty, and it is the input to the update decision: the appliance
+  # refuses to run bytes whose digest does not match what the portal named.
+  # An unstamped binary cannot participate in that at all.
+  local reported
+  reported="$("$binary" -version 2>&1)"
+
+  case "$reported" in
+    *unstamped*)
+      say "REFUSED: the build succeeded and the STAMP DID NOT TAKE."
+      say "  ${binary} -version says: ${reported}"
+      say ""
+      say "  The linker flag produced no commit. A wrong symbol path, a renamed"
+      say "  variable or a quoting slip all build cleanly and stamp nothing, so"
+      say "  this is read back rather than assumed. A binary that cannot say what"
+      say "  it is gives the digest pin nothing to check against."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+
+  say "  built: $(date '+%Y-%m-%d %H:%M:%S') — ${reported}"
 
   say "  built: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'timestamp unreadable')"
 

@@ -9,6 +9,38 @@ somewhere.
 
 ---
 
+## THE RULE: the appliance never compiles, and never holds push access
+
+**Jackie's decision, 20 September 2026, and it is a rule rather than a
+description of how things happen to be.**
+
+- **The build machine is the GEEKOM workstation.** It has the toolchain, the
+  repository and the tests.
+- **The appliance never compiles.** It receives a binary whose digest the
+  portal named, and refuses bytes that do not match.
+- **The appliance never holds push access to its own repository.** A box on a
+  customer's network that can write to the source of what every other box
+  runs is a supply chain with a foothold in it.
+
+**What this replaces.** Until now `preflight.sh` built the probe on every run,
+on the appliance, from a checkout the appliance could also modify. That was
+right while the appliance was a lab experiment and is wrong for a device we
+place inside a client network: it means the bytes that read a directory were
+produced on the box being trusted, from source nobody pinned, by a toolchain
+nobody recorded.
+
+**It is also what makes the digest pin mean anything.** *A binary nobody can
+reproduce from a commit cannot be pinned to one* — and a binary the appliance
+built itself cannot be pinned at all, because the thing being verified is the
+thing that made it.
+
+**The sections below are the build as it runs today**, on a machine with a
+toolchain. They stay, because the build still has to happen somewhere and
+these are the steps — what changes is **where**, and that the appliance is no
+longer one of the answers.
+
+---
+
 ## Build on the CAIRN VM, not on the workstation
 
 **The workstation has no Go toolchain.** That is the whole reason this document

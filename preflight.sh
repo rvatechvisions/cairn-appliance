@@ -54,6 +54,22 @@ fi
 REALM="${CAIRN_REALM:-}"
 DC="${CAIRN_DC:-}"
 PRINCIPAL="${CAIRN_PRINCIPAL:-}"
+
+# kinit prints a prompt LABEL even when the password arrives on a pipe, and
+# this removes it. It is NOT a prompt: stdin is a pipe on both paths, and the
+# script's own prompt is the lower-case one.
+#
+# **The label is removed and the line is not.** kinit writes the prompt with no
+# trailing newline, so a refusal is frequently glued to it --
+# `Password for x@REALM: kinit: Password incorrect ...` -- and dropping the line
+# would discard the error, which is the rule this project holds hardest.
+#
+# Why it matters enough to be here at all: this output is the evidence we hand
+# a district's administrator that the box does not hold their credential, and
+# the label printed four lines under *it was not typed* reads as a prompt
+# somebody answered. Held by `preflight-output-test.sh`, which reads this
+# expression out of this file rather than keeping a second copy of it.
+KINIT_PROMPT_STRIP='s/^Password for [^:]*: *//'
 DHCP_SERVERS="${CAIRN_DHCP_SERVERS:-}"
 
 say "Cairn appliance preflight"
@@ -488,6 +504,10 @@ capability_kerberos() {
   local kinit_out kinit_status
   kinit_out="$(printf '%s' "$CAIRN_PASSWORD" | kinit "$PRINCIPAL" 2>&1)"
   kinit_status=$?
+
+  # The prompt label goes; everything kinit said stays. See KINIT_PROMPT_STRIP.
+  kinit_out="$(printf '%s' "$kinit_out" | sed "$KINIT_PROMPT_STRIP")"
+
   [ -n "$kinit_out" ] && printf '%s\n' "$kinit_out" | sed 's/^/  /'
 
   if [ "$kinit_status" -eq 0 ]; then

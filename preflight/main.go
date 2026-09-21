@@ -165,6 +165,8 @@ func main() {
 	fetch := flag.Bool("fetch", false, "fetch the connection credential with a signed request")
 	fingerprint := flag.String("fingerprint", "", "the fingerprint this appliance is bound as, for -fetch")
 	keyFile := flag.String("keyfile", keyPath, "where this appliance keeps its private key")
+	emit := flag.Bool("emit", false,
+		"with -fetch: write ONLY the password to stdout, everything else to stderr")
 	agreement := flag.Bool("agreement-fixture", false,
 		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
@@ -229,15 +231,36 @@ func main() {
 			return
 		}
 
-		if *fingerprint == "" {
-			fmt.Fprintln(os.Stderr, "preflight: -fingerprint is required with -fetch")
+		// Falls back to what this box enrolled as, so a routine run does not
+		// have to be told a value it already recorded.
+		bound := *fingerprint
+		if bound == "" {
+			bound = storedFingerprint()
+		}
+		if bound == "" {
+			fmt.Fprintln(os.Stderr,
+				"preflight: no -fingerprint, and this box has not recorded one. Enrol first.")
 			os.Exit(2)
 		}
 
-		username, password, err := fetchCredential(*portalURL, *fingerprint, private)
+		username, password, err := fetchCredential(*portalURL, bound, private)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "preflight:", err)
 			os.Exit(1)
+		}
+
+		// **-emit exists so a SCRIPT can use the credential without a human
+		// seeing it.** The password goes to stdout and nothing else does, so a
+		// caller captures it with command substitution; the username and the
+		// reassurance go to stderr, where they stay visible and uncaptured.
+		//
+		// It is a flag rather than the default because the default is a person
+		// running this by hand, and for them a password on stdout is a password
+		// in a scrollback.
+		if *emit {
+			fmt.Fprintln(os.Stderr, "credential fetched for", username)
+			fmt.Print(password)
+			return
 		}
 
 		// The username, and that a password arrived. NEVER the password: a

@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -45,6 +46,25 @@ const signingDomain = "CAIRN-APPLIANCE-v1"
 // somewhere that is not an appliance, which is the only place it can run
 // before there is an appliance.
 var keyPath = "/etc/cairn-appliance/appliance.key"
+
+// fingerprintPath is where the box remembers what it enrolled as.
+//
+// **Not a secret.** It is a hash of the public half, and it is the value a
+// person compares against the card. Writing it means a later run does not
+// have to be told again -- and a run that has to be told a thing it already
+// established is a run somebody can get wrong.
+func fingerprintPath() string {
+	return filepath.Join(filepath.Dir(keyPath), "appliance.fingerprint")
+}
+
+// storedFingerprint returns what this box enrolled as, if it has.
+func storedFingerprint() string {
+	value, err := os.ReadFile(fingerprintPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(value))
+}
 
 // canonicalBytes builds the seven lines, joined with a newline, no trailing
 // newline.
@@ -174,6 +194,14 @@ func enrol(portal, registrationKey string, private ed25519.PrivateKey) (string, 
 	}
 	if answer.Fingerprint == "" {
 		return "", fmt.Errorf("the portal returned no fingerprint")
+	}
+
+	// Remembered beside the key, 0644: it is a hash of a public key and the
+	// thing a person is asked to compare. A failure to write it is reported
+	// rather than swallowed -- a later run would otherwise ask for a value
+	// this one already had.
+	if err := os.WriteFile(fingerprintPath(), []byte(answer.Fingerprint+"\n"), 0o644); err != nil {
+		return answer.Fingerprint, fmt.Errorf("enrolled, but could not record the fingerprint: %w", err)
 	}
 
 	return answer.Fingerprint, nil

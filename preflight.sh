@@ -235,6 +235,56 @@ capability_credential_source() {
   # run has no terminal to ask. `[ -t 0 ]` is the test for that, and a run with
   # no terminal and no variable falls through to the refusal below rather than
   # blocking for input nobody can supply.
+  # THE PORTAL FETCH COMES FIRST, and its position is the whole point.
+  #
+  # Below this, a run with no credential prompts a human. That is the lab
+  # path and the script says so in terms: **never use this at a customer**.
+  # If the fetch ran after the prompt, an enrolled appliance at a district
+  # would still ask somebody for the password -- and the operator typing it
+  # would have no way to know the box could have got it itself.
+  #
+  # So: enrolled, told a portal, and not already carrying a credential means
+  # the credential comes from the portal and nothing is typed.
+  if [ -z "${CAIRN_PASSWORD:-}" ] && [ "$enrolled" -eq 1 ] && [ -n "${CAIRN_PORTAL:-}" ]; then
+    local fetched=""
+    local fetch_status=0
+
+    # -emit writes ONLY the password to stdout; the username and any refusal
+    # go to stderr, which is left attached so the operator sees them. The
+    # value is captured into a variable and never echoed.
+    # ONE invocation. An earlier draft of this ran it twice -- once to catch
+    # stderr and once for the value -- which would have spent a nonce on a
+    # request whose answer was thrown away, and left the operator reading the
+    # diagnostics of a fetch that was not the one that counted.
+    fetched="$("${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -fetch -emit)" || fetch_status=$?
+
+    if [ "$fetch_status" -eq 0 ] && [ -n "$fetched" ]; then
+      CAIRN_PASSWORD="$fetched"
+      export CAIRN_PASSWORD
+      unset fetched
+
+      say ""
+      say "CREDENTIAL SOURCE: the portal, fetched for this run."
+      say "  It was not typed, is not on this disk, and goes no further than"
+      say "  this process and one memory-backed ticket cache."
+      FOUND=$((FOUND + 1))
+      return 0
+    fi
+
+    # A refusal here is NOT a fall-through to the prompt. The box is enrolled
+    # and was told a portal; if the portal would not hand it a credential,
+    # that is the finding, and asking a human to type one instead would
+    # paper over exactly the thing this run is testing.
+    say ""
+    say "REFUSED: enrolled, and the portal would not hand over a credential."
+    say "  Nothing was typed and nothing was sent to the domain."
+    say "  The portal named the reason on stderr above. The usual causes are a"
+    say "  revoked appliance, a clock more than five minutes out, or no"
+    say "  credential saved on that connection yet."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
   if [ -z "${CAIRN_PASSWORD:-}" ] && [ -t 0 ]; then
     printf '\n  password for %s (not echoed): ' "${PRINCIPAL:-the service account}"
     IFS= read -rs CAIRN_PASSWORD
@@ -254,17 +304,6 @@ capability_credential_source() {
     return 0
   fi
 
-  if [ "$enrolled" -eq 1 ] && [ -n "${CAIRN_PORTAL:-}" ]; then
-    say ""
-    say "CREDENTIAL SOURCE: the portal, fetched per run."
-    say "  **The portal side of this is not built.** There is no endpoint to"
-    say "  fetch from yet, so nothing below can obtain a credential this way and"
-    say "  step 1 will report that it had none. Saying so here rather than"
-    say "  failing later is the difference between a missing feature and a"
-    say "  mystery."
-    UNASKED=$((UNASKED + 1))
-    return 1
-  fi
 
   # Reached only with no terminal AND no variable, which is a scheduled or
   # piped run. There is nobody to prompt, so it says what such a run needs

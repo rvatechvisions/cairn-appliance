@@ -969,22 +969,44 @@ capability_dhcp() {
   say "toolchain: ${selected} (pinned in go.mod)"
   say "building the DHCP probe..."
 
-  # `go mod tidy` before `go build`, because go.mod deliberately pins
-  # nothing: the require line and the checksums are written from the imports
-  # on first build, which is the only way a version here is read rather than
-  # recalled. Without this, `go build` refuses with "missing go.sum entry"
-  # for every import -- five errors naming packages that are all correct.
+  # `go mod tidy` ONLY when there is no go.sum, and the comment that used to
+  # sit here was describing a design that had already been replaced.
   #
-  # It needs the network once. Its failure is reported on its own, because
-  # "could not reach the module proxy" and "the code does not compile" are
-  # different facts and only the second is about this repository.
-  if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
-    say "REFUSED: could not resolve the probe's dependencies."
-    say "  This needs outbound network access to the Go module proxy, once."
-    say "  It is not a failure of the domain or of this host's credentials."
-    REFUSED=$((REFUSED + 1))
-    return 1
+  # It said go.mod "deliberately pins nothing" and that the require line and
+  # checksums are written from the imports on first build. That was true, and
+  # stopped being true when the module was pinned and go.sum committed -- and
+  # the sentence survived, directly above the one command that rewrites the
+  # file it was describing. A superseded design surviving in the prose beside
+  # the thing that changed is a shape this project has already paid for once.
+  #
+  # Tidy is kept for the case it was written for: a tree with no go.sum, where
+  # `go build` refuses with "missing go.sum entry" for every import -- five
+  # errors naming packages that are all correct. That case needs the network
+  # once, and its failure is reported on its own, because "could not reach the
+  # module proxy" and "the code does not compile" are different facts and only
+  # the second is about this repository.
+  #
+  # When go.sum IS present the build is offline and the pin is authoritative.
+  if [ ! -f "${HERE}/preflight/go.sum" ]; then
+    say "  no go.sum: resolving dependencies once, which needs the network"
+    if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
+      say "REFUSED: could not resolve the probe's dependencies."
+      say "  This needs outbound network access to the Go module proxy, once."
+      say "  It is not a failure of the domain or of this host's credentials."
+      REFUSED=$((REFUSED + 1))
+      return 1
+    fi
   fi
+
+  # The pin has to survive the build, and that is asserted rather than assumed.
+  #
+  # The toolchain check above compares the selected compiler against the
+  # version in go.mod. If anything in this step rewrites go.mod, that check
+  # compared against a file the build then changed, and the pin is a sentence
+  # rather than a constraint. Cheap to check, and it fails in the direction
+  # that asks a person rather than the one that carries on.
+  local mod_before
+  mod_before="$(cat "${HERE}/preflight/go.mod")"
 
   # The commit is stamped in, and the stamp is READ BACK below.
   #
@@ -1005,6 +1027,17 @@ capability_dhcp() {
     say "  a change made since then, and the compiler names it above."
     say ""
     say "  Nothing about the domain, the account or the credential is implicated."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  if [ "$(cat "${HERE}/preflight/go.mod")" != "${mod_before}" ]; then
+    say "REFUSED: the build rewrote go.mod."
+    say ""
+    say "  The toolchain check above read a pinned version out of that file,"
+    say "  and something here has since changed it -- so what was compared is"
+    say "  not what was built against. Run:  git -C . diff preflight/go.mod"
+    say "  to see it. Do not commit the rewrite without deciding about it."
     REFUSED=$((REFUSED + 1))
     return 1
   fi

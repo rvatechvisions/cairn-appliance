@@ -4,19 +4,30 @@ go 1.26.0
 
 toolchain go1.27.1
 
-// NO REQUIRE LINE, DELIBERATELY. `go mod tidy` writes it, from the imports in
-// main.go, with a real version and a checksum.
+// THE VERSIONS BELOW WERE WRITTEN BY `go mod tidy`, NOT BY A PERSON, AND THAT
+// IS THE WHOLE POINT OF THEM.
 //
 // A version written from memory is a fabricated identifier in the one place
 // where being wrong is silent: a module that does not exist fails loudly, and a
-// module version that exists but is not the one anybody meant does not.
+// module version that exists but is not the one anybody meant does not. So the
+// requires and the checksums in go.sum were resolved once, from the imports in
+// main.go, against the module proxy -- and then committed, which is what turns
+// a resolution into a pin.
 //
-// The first version of this file tried to have it both ways -- it said nothing
-// was pinned and then pinned `v0.0.0`, which is not a version anybody publishes.
-// The result was that `go build` refused with five "missing go.sum entry"
+// **This comment used to say there was deliberately no require line**, which
+// was true before the pin and was left sitting directly above two require
+// blocks that contradicted it. A superseded design survives in the text beside
+// the thing that changed, because a rewrite is prompted by the sentence that
+// now reads falsely and nobody rereads the paragraph above the diff.
+//
+// The history worth keeping: the first version tried to have it both ways --
+// it said nothing was pinned and then pinned `v0.0.0`, which is not a version
+// anybody publishes. `go build` refused with five "missing go.sum entry"
 // errors naming packages that were imported correctly, and the reader was sent
 // looking at the imports rather than at the line that had invented a version.
-// An empty requirement is what "not pinned" actually looks like.
+//
+// To change a version here: change it in one place, run the build, and let the
+// proxy refuse it if it does not exist. Do not hand-edit go.sum.
 
 require (
 	github.com/oiweiwei/go-msrpc v1.6.4

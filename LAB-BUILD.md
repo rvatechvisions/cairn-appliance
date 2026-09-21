@@ -134,6 +134,66 @@ cd cairn-appliance
 That is the whole step. Skip to section 2 unless the VM has no route to the
 internet.
 
+### Updating a box that has already run
+
+**The lab box is in this state, so this is the path rather than a footnote.**
+After the first run it holds three things the repository now disagrees with:
+a modified `preflight/go.mod`, an untracked `preflight/go.sum`, and a stale
+stamped binary called `preflight-5c3273b`.
+
+**None of them is damage.** The first run resolved the module versions on the
+box, because that is what the script did then; those same versions have since
+been **committed to the repository**, so the box’s local copies are now an
+older answer to a question that has been settled. A plain `git pull` refuses
+rather than choosing between them, which is correct and is why there are
+commands here instead of one.
+
+```bash
+cd ~/cairn-appliance
+
+# 1. What is there now. Read this before and after, because a command that
+#    silently does nothing looks exactly like one that worked.
+git --no-pager status --short
+git --no-pager log -1 --format='%h %s'
+
+# 2. Discard the local go.mod. THIS THROWS AWAY THE BOX'S EDIT -- which is
+#    what you want, because the repository now carries the same versions as
+#    a pin. Check the diff first if you would rather see what goes.
+git --no-pager diff -- preflight/go.mod
+git checkout -- preflight/go.mod
+
+# 3. Remove the untracked go.sum, so the pull can bring the committed one.
+#    Same file, same contents, different provenance: one was resolved here
+#    and one is in the repository.
+rm -f preflight/go.sum
+
+# 4. Remove the stale stamped binary. It is build output, it is not ignored,
+#    and a binary named after a commit that is no longer HEAD is the exact
+#    thing the stamp exists to make visible.
+rm -f preflight-5c3273b
+
+# 5. Fast-forward only. A merge commit on the appliance is a tree nobody can
+#    reproduce from the repository, which is the property the whole build
+#    argument rests on.
+git pull --ff-only
+
+# 6. Read it back. The commit should have moved and the tree should be clean.
+git --no-pager status --short
+git --no-pager log -1 --format='%h %s'
+```
+
+**`--no-pager` on every one of them**, because `git` opens `less` on a small
+terminal and a command that is waiting for a keypress is indistinguishable
+from one that has hung.
+
+**If step 5 still refuses**, it will name the file it is protecting. Do not
+force it. Every file this repository tracks is either shell, Go or markdown,
+so anything else the box is holding is something it made, and the refusal is
+telling you which.
+
+**Then re-run the three commands in section 4.** The build is offline now:
+`go mod tidy` runs only when there is no `go.sum`, and there is one.
+
 **Why it is public, stated rather than left as a default.** Jackie's decision,
 20 September 2026. Every way of cloning a *private* repository ends with a
 GitHub credential on the box — and that box is the one machine in this design

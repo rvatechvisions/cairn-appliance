@@ -926,6 +926,47 @@ capability_dhcp() {
   # That is *committed is not shipped* at the smallest scale. Go's build cache
   # makes a rebuild with no changes almost free, so the guard was saving
   # nothing and costing the ability to trust the result.
+  # THE COMPILER IS THE ONE go.mod PINS, AND THAT IS READ RATHER THAN ASSUMED.
+  #
+  # `toolchain go1.27.1` in go.mod means any Go 1.21+ selects that compiler,
+  # fetching it if it has to. That is what makes the binary a property of the
+  # COMMIT rather than of whichever machine built it -- the same purpose as
+  # -trimpath and the commit stamp, and decision 3 needs all three.
+  #
+  # It needs network the first time. **A build that quietly fell back to a
+  # local compiler is the same defect as a stamp that did not take**: it
+  # succeeds, it looks right, and the bytes are not the ones anybody pinned.
+  # So the selected toolchain is compared with the pin and a mismatch refuses.
+  local pinned selected
+  pinned="$(sed -n 's/^toolchain \(go[0-9.]*\)$/\1/p' "${HERE}/preflight/go.mod")"
+  selected="$(cd "${HERE}/preflight" && go version 2>/dev/null | awk '{print $3}')"
+
+  if [ -z "$pinned" ]; then
+    say "REFUSED: preflight/go.mod names no toolchain."
+    say "  The build would use whatever compiler this host happens to have,"
+    say "  which makes the binary a property of the machine rather than of the"
+    say "  commit. Add a toolchain line before building."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  if [ "$selected" != "$pinned" ]; then
+    say "REFUSED: the TOOLCHAIN IS NOT THE PINNED ONE."
+    say "  go.mod pins ${pinned}; this build would use ${selected:-(go did not answer)}."
+    say ""
+    say "  The usual cause is no network: the pinned compiler is fetched on"
+    say "  first use, and a host that cannot reach the proxy falls back to its"
+    say "  own. That fallback is refused rather than accepted, because a build"
+    say "  that quietly used a different compiler than the one pinned is the"
+    say "  same defect as a stamp that did not take."
+    say ""
+    say "  This is moot once the signed binary ships and this box stops"
+    say "  compiling. Until then: give it network once, or build elsewhere."
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  say "toolchain: ${selected} (pinned in go.mod)"
   say "building the DHCP probe..."
 
   # `go mod tidy` before `go build`, because go.mod deliberately pins
@@ -955,7 +996,7 @@ capability_dhcp() {
   local stamp_commit
   stamp_commit="$(git -C "${HERE}" rev-parse HEAD 2>/dev/null || echo "")"
 
-  if ! (cd "${HERE}/preflight" && go build -ldflags "-X main.commit=${stamp_commit}" -o preflight . 2>&1 | sed 's/^/  /'); then
+  if ! (cd "${HERE}/preflight" && go build -trimpath -ldflags "-X main.commit=${stamp_commit}" -o preflight . 2>&1 | sed 's/^/  /'); then
     say "REFUSED: the probe's dependencies resolved and it did not compile."
     say ""
     say "  THIS IS THE CODE, NOT THIS HOST. The probe compiled and ran on this"

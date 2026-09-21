@@ -2,6 +2,8 @@ module github.com/rvatechvisions/cairn-appliance/preflight
 
 go 1.26.0
 
+toolchain go1.27.1
+
 // NO REQUIRE LINE, DELIBERATELY. `go mod tidy` writes it, from the imports in
 // main.go, with a real version and a checksum.
 //

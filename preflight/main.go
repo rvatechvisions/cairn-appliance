@@ -43,6 +43,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -134,6 +135,57 @@ func stamp() string {
 	return fmt.Sprintf("preflight %s %s", v, c)
 }
 
+// readRegistrationKey takes the key from stdin so it is never an argument.
+//
+// **An argument is visible in /proc/<pid>/cmdline** to every user on the box
+// for as long as the process runs. On a lab box nobody else uses that is a
+// second or two of exposure to nobody; on a district's collector it is a host
+// on somebody else's network with somebody else's administrators on it, and
+// the key redeems into a binding that fetches a credential.
+//
+// Works both ways a person will use it: piped, and typed at a prompt. The
+// prompt goes to STDERR rather than stdout so that a caller redirecting the
+// output still sees it, and so nothing a script captures contains it.
+//
+// **Whitespace is trimmed and the result refused if empty**, because a key
+// pasted into a terminal picks up a trailing newline and a key that arrives
+// empty would otherwise be sent to the portal as one -- which the portal would
+// refuse in the same words as a wrong key, sending the reader to the wrong
+// question.
+func readRegistrationKey() (string, error) {
+	// Whether anything is piped in, without taking a dependency to ask.
+	//
+	// A character device means a terminal, so nothing is waiting on stdin and a
+	// bare `-enrol` would hang with no explanation. That is worse than refusing:
+	// a command that sits there looks like a slow network.
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return "", fmt.Errorf("checking stdin: %w", err)
+	}
+
+	if (info.Mode() & os.ModeCharDevice) != 0 {
+		return "", fmt.Errorf(
+			"-enrol reads the registration key from stdin and nothing is piped in.\n"+
+				"       Type it without it reaching your shell history:\n"+
+				"         read -rs KEY; printf '%%s' \"$KEY\" | preflight/preflight -portal <url> -enrol; unset KEY")
+	}
+
+	piped, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("reading the registration key from stdin: %w", err)
+	}
+
+	// Trimmed because a key pasted into a terminal picks up a trailing newline,
+	// and refused when empty because an empty key would otherwise be sent and
+	// refused by the portal in the same words as a wrong one -- which sends the
+	// reader to the wrong question.
+	key := strings.TrimSpace(string(piped))
+	if key == "" {
+		return "", fmt.Errorf("no registration key arrived on stdin")
+	}
+	return key, nil
+}
+
 func main() {
 	server := flag.String("server", "", "the DHCP server to ask, by name")
 	scopes := flag.Int("scopes", 3, "how many scopes to read leases from, for the probe")
@@ -161,7 +213,12 @@ func main() {
 	// something on the box is a key that gets forwarded, kept, and run
 	// somewhere else a year later.
 	portalURL := flag.String("portal", "", "the portal base URL, for -enrol or -fetch")
-	registrationKey := flag.String("enrol", "", "redeem this registration key and bind this appliance")
+	// -enrol takes NO value. The key is read from stdin, which is the whole
+	// point: an argument is visible in /proc/<pid>/cmdline to every user on the
+	// box for the life of the process. Seconds, on a host we do not own, with
+	// somebody else's administrators on it.
+	enrolling := flag.Bool("enrol", false,
+		"redeem a registration key read from stdin and bind this appliance")
 	fetch := flag.Bool("fetch", false, "fetch the connection credential with a signed request")
 	fingerprint := flag.String("fingerprint", "", "the fingerprint this appliance is bound as, for -fetch")
 	keyFile := flag.String("keyfile", keyPath, "where this appliance keeps its private key")
@@ -198,7 +255,7 @@ func main() {
 		return
 	}
 
-	if *registrationKey != "" || *fetch {
+	if *enrolling || *fetch {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr, "preflight: -portal is required with -enrol or -fetch")
 			os.Exit(2)
@@ -217,8 +274,14 @@ func main() {
 			os.Exit(1)
 		}
 
-		if *registrationKey != "" {
-			bound, err := enrol(*portalURL, *registrationKey, private)
+		if *enrolling {
+			registrationKey, err := readRegistrationKey()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(2)
+			}
+
+			bound, err := enrol(*portalURL, registrationKey, private)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				os.Exit(1)

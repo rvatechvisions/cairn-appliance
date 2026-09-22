@@ -40,6 +40,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"flag"
@@ -47,6 +48,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -165,10 +167,28 @@ func readRegistrationKey() (string, error) {
 	}
 
 	if (info.Mode() & os.ModeCharDevice) != 0 {
-		return "", fmt.Errorf(
-			"-enrol reads the registration key from stdin and nothing is piped in.\n"+
-				"       Type it without it reaching your shell history:\n"+
-				"         read -rs KEY; printf '%%s' \"$KEY\" | preflight/preflight -portal <url> -enrol; unset KEY")
+		// **A terminal, so ASK. Do not print a recipe.**
+		//
+		// This used to refuse and print a three-step recipe: read the key into
+		// a shell variable with echo off, pipe that variable into this command,
+		// then clear the variable.
+		//
+		// The recipe is DESCRIBED rather than written, because the test that
+		// forbids it greps this source and cannot tell an account of the
+		// pattern from an instance of it -- which this project already records
+		// for a SQL statement and a commit body, and which I broke here inside
+		// the comment explaining why the pattern is wrong.
+		//
+		// Three steps, a shell variable and a paste, printed at exactly the
+		// moment somebody is holding a secret and wants to get on. On
+		// 22 September 2026 that produced what it was written to prevent: the
+		// key went onto the command line instead of at read's prompt and
+		// landed in .bash_history in clear text.
+		//
+		// **A procedure that asks a person to put a secret into a shell will
+		// eventually put it into their history.** The binary was already the
+		// thing holding the prompt; it simply was not asking.
+		return promptForRegistrationKey()
 	}
 
 	piped, err := io.ReadAll(os.Stdin)
@@ -185,6 +205,69 @@ func readRegistrationKey() (string, error) {
 		return "", fmt.Errorf("no registration key arrived on stdin")
 	}
 	return key, nil
+}
+
+// promptForRegistrationKey reads the key from the terminal with echo off.
+//
+// **stty rather than a dependency.** Turning echo off needs termios, and the
+// package for it is golang.org/x/term -- which means `go mod tidy` against a
+// pinned module, the command that blocked a pull on the lab box and which
+// BUILD.md now tells people not to run. stty is on every host that has a
+// terminal to prompt at, and this branch only runs when there is one.
+//
+// **Echo is restored with a defer, and that is the load-bearing part.** An
+// interrupt at the prompt would otherwise leave the operator with a terminal
+// that shows nothing they type, on a box they may be on over SSH -- a worse
+// state than the one this replaced.
+func promptForRegistrationKey() (string, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		// No terminal to ask at, and nothing piped either. Say both, because
+		// "no key" and "nowhere to ask" send a reader to different places.
+		return "", fmt.Errorf(
+			"no registration key: nothing was piped in and there is no terminal to ask at.\n"+
+				"       Run this from a terminal, or pipe the key in for an unattended run.")
+	}
+	defer tty.Close()
+
+	restore := silenceEcho(tty)
+	defer restore()
+
+	fmt.Fprint(tty, "registration key (not shown): ")
+
+	reader := bufio.NewReader(tty)
+	typed, err := reader.ReadString('\n')
+	fmt.Fprintln(tty)
+
+	if err != nil && typed == "" {
+		return "", fmt.Errorf("reading the registration key: %w", err)
+	}
+
+	key := strings.TrimSpace(typed)
+	if key == "" {
+		return "", fmt.Errorf("no registration key was typed")
+	}
+	return key, nil
+}
+
+// silenceEcho turns terminal echo off and hands back the way to put it back.
+//
+// It returns a restore function even when it could not turn echo off, so the
+// caller has nothing to decide: a failure here means the key is visible while
+// it is typed, which is worse than a pipe and better than refusing to enrol
+// at all -- and the operator can see that it is visible.
+func silenceEcho(tty *os.File) func() {
+	if err := sttyOn(tty, "-echo"); err != nil {
+		fmt.Fprintln(tty, "(could not turn echo off; what you type will be visible)")
+		return func() {}
+	}
+	return func() { _ = sttyOn(tty, "echo") }
+}
+
+func sttyOn(tty *os.File, mode string) error {
+	cmd := exec.Command("stty", mode)
+	cmd.Stdin = tty
+	return cmd.Run()
 }
 
 func main() {
@@ -218,6 +301,14 @@ func main() {
 	// point: an argument is visible in /proc/<pid>/cmdline to every user on the
 	// box for the life of the process. Seconds, on a host we do not own, with
 	// somebody else's administrators on it.
+	// **Both spellings, and -enroll is the documented one.**
+	//
+	// The portal and its clients are American; the lab box and the runbook
+	// have been using -enrol all week. A spelling change that broke a live
+	// procedure would be a worse defect than the one it fixes, so the old
+	// spelling keeps working and the help names the new one.
+	enrollUS := flag.Bool("enroll", false,
+		"redeem a registration key and bind this appliance; asks for the key, or reads it from stdin")
 	enrolling := flag.Bool("enrol", false,
 		"redeem a registration key read from stdin and bind this appliance")
 	fetch := flag.Bool("fetch", false, "fetch the connection credential with a signed request")
@@ -275,10 +366,13 @@ func main() {
 		return
 	}
 
-	if *enrolling || *fetch || *report {
+	// Either spelling means the same act.
+	doEnrol := *enrolling || *enrollUS
+
+	if doEnrol || *fetch || *report {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enrol, -fetch or -report")
+				"preflight: -portal is required with -enroll, -fetch or -report")
 			os.Exit(2)
 		}
 
@@ -295,7 +389,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		if *enrolling {
+		if doEnrol {
 			registrationKey, err := readRegistrationKey()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)

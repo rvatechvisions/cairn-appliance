@@ -429,14 +429,14 @@ capability_credential_source() {
       # to kinit would put a failed logon in a customer’s domain.
       if [ -z "$portal_username" ] || [ -z "${CAIRN_PASSWORD:-}" ]; then
         say ""
-        say "REFUSED: the portal’s answer did not carry the fields this run needs."
+        say "REFUSED: the portal's answer did not carry the fields this run needs."
         say "  Expected a username line and a password after a blank line."
         say "  The usual cause is a binary and a script from different pulls:"
         say "  run git pull --ff-only in the appliance repository, rebuild, and"
         say "  try again. Nothing was typed and nothing was sent to the domain."
         REFUSED=$((REFUSED + 1))
         CRED_FAILED=1
-        CRED_REASON="the portal’s answer did not carry the expected fields"
+        CRED_REASON="the portal's answer did not carry the expected fields"
         return 1
       fi
 
@@ -554,6 +554,19 @@ capability_credential_source || true
 # it in a subshell and the counter it increments is lost, which would leave
 # every capability reported as though it did nothing.
 # ---------------------------------------------------------------------------
+# **The names below are STORED VALUES, not labels.** They go into the
+# portal's appliance_runs rows and onto a client's connection card, so they
+# are US English and plain ASCII, and the set is asserted exactly by
+# preflight-stored-values-test.sh. A sixth capability fails that test until
+# somebody decides what it is called -- which is the point, because a token
+# cannot be respelled after the first real run without splitting the history
+# into rows that disagree with each other.
+#
+# The same applies to every REFUSED and NOT ASKED line: the first one a
+# capability prints becomes its stored reason. json_safe deletes any byte
+# above 0x7f, so a typographic apostrophe there arrives as nothing at all and
+# the portal stores a word with a letter missing. Plain ASCII, in those lines
+# specifically, whatever the prose around them does.
 CAP_JSON=""
 
 # A reason, reduced to something that cannot break the JSON it goes into.
@@ -654,7 +667,7 @@ capability_kerberos() {
   fi
 
   if [ -z "${CAIRN_PASSWORD:-}" ]; then
-    say "NOT ASKED: no credential was available for this run — see step 0."
+    say "NOT ASKED: no credential was available for this run; see step 0."
     say "  This is not a refusal by the domain. Nothing was sent to it."
     UNASKED=$((UNASKED + 1))
     return 1
@@ -1203,7 +1216,7 @@ capability_authorized_servers() {
 
   if [ $status -ne 0 ]; then
     printf '%s\n' "$out" | sed 's/^/  /'
-    say "REFUSED: the authorised-server list could not be read."
+    say "REFUSED: the authorized-server list could not be read."
     say "  This needs only an authenticated user, so a refusal here is a"
     say "  different fact from the DHCP interface refusing below."
     REFUSED=$((REFUSED + 1))
@@ -1253,7 +1266,7 @@ capability_authorized_servers() {
   FOUND=$((FOUND + 1))
   return 0
 }
-run_capability dhcp-authorised capability_authorized_servers || true
+run_capability dhcp-authorized capability_authorized_servers || true
 
 # ---------------------------------------------------------------------------
 # 5. DHCP over MS-DHCPM

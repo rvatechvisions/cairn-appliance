@@ -41,6 +41,21 @@ KEY="${CONFIG_DIR}/appliance.key"
 # generator to have made it.
 PUB="${KEY}.pub"
 
+# **A refusal exits non-zero, and the code is named here rather than written
+# at the branch.**
+#
+# This branch used to `exit 0`. A script that did nothing then reported
+# success to everything that reads a status -- a pipeline, the next line of a
+# runbook, and a person who has learned that zero means it worked. Not-done
+# and done printed the same, which is the shape this project refuses
+# everywhere else and had here.
+#
+# 3 rather than 1, because it is not a failure: the box is fine and already
+# has an identity. Same reasoning as the suite runner using 70 for "come back
+# in a minute" and 75 for a voided run -- *your repository is fine* is a
+# different message from *something is wrong*.
+ALREADY_ENROLLED_EXIT=3
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "This must run as root: it writes to ${CONFIG_DIR}."
   exit 1
@@ -51,51 +66,64 @@ if [ ! -d "$CONFIG_DIR" ]; then
   exit 1
 fi
 
-if [ -f "$KEY" ]; then
-  # THE ALREADY-ENROLLED BRANCH TOLD THE OPERATOR TO DO TWO THINGS THEY
-  # CANNOT DO, and it is fixed here to the standard the fresh-run branch
-  # already holds: an appliance that printed a key and implied it had
-  # registered would be the most confidently wrong output this script could
-  # produce.
+# **EITHER half is enough to refuse, and the guard used to test only the
+# private one.**
+#
+# With `appliance.key` gone and `appliance.key.pub` still here -- which is
+# exactly what a failed generation leaves behind -- the old guard passed, and
+# `openssl pkey -pubout -out "$PUB"` below overwrote the orphan without
+# saying so. One real silent overwrite, in the script whose whole subject is
+# not overwriting things.
+if [ -f "$KEY" ] || [ -f "$PUB" ]; then
+  # WHAT THIS BRANCH USED TO SAY WAS TRUE WHEN IT WAS WRITTEN AND IS NOT NOW.
   #
-  # It said "revoke this appliance in the portal" -- there is no portal record
-  # and no page, so that instruction names a thing that does not exist. And it
-  # said "delete both files", which contradicts the rule that nothing is
-  # deleted when it can be moved aside: a retired key is evidence about what
-  # was enrolled, and the one on the lab box was moved to
-  # /root/cairn-retired-keys rather than removed.
+  # It said, in capitals, that the portal holds no record and the enrolment
+  # endpoint is not built, and that the revoke step would come back "when
+  # stage 3 lands". Stage 3 landed in v4.47 on 21 September 2026, an
+  # appliance enrolled through it, and it was revoked through the connection
+  # card on 22 September at 08:21:41 Eastern.
   #
-  # The revoke step comes back when stage 3 lands, naming the actual page.
-  echo "This appliance already has a key."
+  # **The stale half is the half that instructs**, so it is amended here
+  # rather than contradicted somewhere newer: a reader following this branch
+  # would have moved a pair aside and left a live binding in the portal
+  # pointing at a key nobody holds.
+  found="both halves"
+  [ -f "$KEY" ] && [ ! -f "$PUB" ] && found="the private half only"
+  [ ! -f "$KEY" ] && [ -f "$PUB" ] && found="the PUBLIC half only, with no private key"
+
+  echo "This appliance already has a key: ${found}."
   echo
-  echo "It is at ${KEY} and was generated here. There is deliberately no way"
-  echo "to re-issue it from the portal: a key the portal could reissue is a key"
-  echo "the portal has held, which is the property this design exists for."
+  echo "  private: ${KEY}"
+  echo "  public:  ${PUB}"
   echo
-  echo "THE PORTAL HOLDS NO RECORD OF IT YET. The enrolment endpoint is not"
-  echo "built, so there is nothing to revoke and nobody to tell. Having a key"
-  echo "here is not the same as being enrolled, and this script will not imply"
-  echo "otherwise."
+  echo "Generated here, and there is deliberately no way to re-issue it from"
+  echo "the portal: a key the portal could reissue is a key the portal has"
+  echo "held, which is the property this design exists for."
   echo
-  echo "To replace it, move the current pair aside and run this again:"
+  echo "THE PORTAL MAY HOLD A BINDING FOR IT. Enrolment is live, so a key"
+  echo "here is very likely an identity the portal will still accept."
   echo
-  echo "  mkdir -p /root/cairn-retired-keys && chmod 700 /root/cairn-retired-keys"
-  echo "  mv ${KEY} ${PUB} /root/cairn-retired-keys/"
-  echo "  $0"
+  echo "To replace it, in this order:"
+  echo
+  echo "  1. Revoke the appliance on the connection card in the portal."
+  echo "     Integrations, the collector card, Revoke this appliance. Do this"
+  echo "     FIRST: a pair moved aside while the binding is live leaves an"
+  echo "     identity the portal accepts and nobody holds."
+  echo
+  echo "  2. Move the pair aside, and run this again:"
+  echo
+  echo "     mkdir -p /root/cairn-retired-keys && chmod 700 /root/cairn-retired-keys"
+  echo "     mv ${KEY} ${PUB} /root/cairn-retired-keys/ 2>/dev/null || true"
+  echo "     $0"
   echo
   echo "Moved rather than deleted, deliberately: a retired key is the evidence"
   echo "of what was enrolled, and it costs nothing to keep."
-  echo
-  echo "When the portal side exists this will say to revoke the appliance there"
-  echo "FIRST, and will name the page. It does not say that today because today"
-  echo "it would be an instruction nobody can follow."
 
-  # The error stream is kept rather than discarded. A missing public half is
-  # exactly the state the first version of this script produced, and sending
-  # the complaint to the null device would print a list with one entry and let
-  # it read as a complete pair.
+  # The error stream is kept rather than discarded. A missing half is exactly
+  # the state this guard now catches, and sending the complaint to the null
+  # device would print a list with one entry and let it read as a pair.
   ls -l "$KEY" "$PUB"
-  exit 0
+  exit "$ALREADY_ENROLLED_EXIT"
 fi
 
 echo "Generating this appliance's key. It does not leave this machine."

@@ -1182,7 +1182,7 @@ capability_dns() {
 run_capability dns-zones capability_dns || true
 
 # ---------------------------------------------------------------------------
-# 4. The authorised DHCP servers, from the directory
+# 4. The authorized DHCP servers, from the directory
 #
 # ## This is the capability that earns partial credit, and it is why the
 # ## summary below counts rather than stopping
@@ -1198,7 +1198,7 @@ run_capability dns-zones capability_dns || true
 # The spike this came from stopped at the first failure. That was right for a
 # question of *does any of this work at all* and is wrong here.
 # ---------------------------------------------------------------------------
-rule "4. Authorised DHCP servers, from the directory"
+rule "4. Authorized DHCP servers, from the directory"
 capability_authorized_servers() {
   if [ "$LDAP_OK" -ne 0 ]; then
     say "NOT ASKED: the directory did not answer."
@@ -1245,7 +1245,7 @@ capability_authorized_servers() {
   # server whose name is dead, it is not a server.
   #
   # The PowerShell collector is not affected -- it reads `Get-DhcpServerInDC`,
-  # which is the authorised list rather than the container -- so this is a
+  # which is the authorized list rather than the container -- so this is a
   # hazard for the appliance census only, and it is separated here at the read
   # rather than left for the receiver to filter.
   local entries servers
@@ -1257,11 +1257,11 @@ capability_authorized_servers() {
   say ""
   say "  AN ENTRY IS NOT A SERVER. CN=DhcpRoot is a container Microsoft creates"
   say "  in every domain; it matches this filter and carries no dhcpServers"
-  say "  attribute. Only the ${servers} above are authorised servers. An entry"
+  say "  attribute. Only the ${servers} above are authorized servers. An entry"
   say "  with no such attribute is NOT-A-SERVER, which is a different state from"
   say "  a server whose name does not resolve, and only the second is a finding."
   say ""
-  say "  The authorised list is what the directory says; whether each of those"
+  say "  The authorized list is what the directory says; whether each of those"
   say "  servers still exists is a separate question this does not ask."
   FOUND=$((FOUND + 1))
   return 0
@@ -1551,7 +1551,7 @@ say ""
 #
 # **Partial credit, stated rather than left to be inferred from the counts.**
 #
-# The capabilities above need different rights: reading the authorised-server
+# The capabilities above need different rights: reading the authorized-server
 # list needs an authenticated user, the DHCP interface needs DHCP Users. So a
 # run can prove most of what matters and fail the last one, and that is a
 # result worth carrying back rather than a wasted trip. Saying so here is the

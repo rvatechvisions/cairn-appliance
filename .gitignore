@@ -24,3 +24,7 @@ preflight-*.txt
 # Go build output.
 /preflight/preflight
 /preflight/preflight.exe
+
+# The spell check writes its extract here and removes it. Named so a crashed
+# run leaves nothing untracked behind.
+.operator-text.txt

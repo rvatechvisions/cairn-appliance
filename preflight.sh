@@ -590,6 +590,18 @@ run_capability() {
 
   log="$(mktemp)"
 
+  # **A line before the silence, because the silence is new.**
+  #
+  # The capability writes to a file and the file is printed when it finishes,
+  # which is what keeps the counters in this shell -- a pipeline would put the
+  # function in a subshell and every capability would report as having done
+  # nothing. The cost is that a slow one now prints nothing while it runs, and
+  # DHCP against several servers is slow.
+  #
+  # A box that looks hung is a box somebody interrupts, and an interrupted run
+  # reports nothing at all. One line is cheaper than that.
+  say "asking... (this capability prints its output when it finishes)"
+
   "$fn" >"$log" 2>&1
   status=$?
 

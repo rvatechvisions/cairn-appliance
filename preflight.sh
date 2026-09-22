@@ -1527,7 +1527,18 @@ run_capability dhcp capability_dhcp || true
 
 # ---------------------------------------------------------------------------
 rule "what this appliance can reach"
-say "found:      ${FOUND}"
+# **This tally counts SIX and the portal counts five, and both are right.**
+#
+# Step 0 -- where the credential came from -- is one of the things counted
+# here, because it is one of the things this run did. The report sends it as
+# the run OUTCOME rather than as a capability: a run that could not get a
+# credential asked the domain nothing, so it has no capability list at all
+# rather than an empty one.
+#
+# Saying so on both surfaces is the point. Two numbers that disagree invite
+# subtraction, and a reader with no noun beside either will decide one is
+# wrong.
+say "found:      ${FOUND}   (including step 0, where the credential came from)"
 say "refused:    ${REFUSED}"
 say "not asked:  ${UNASKED}"
 say ""

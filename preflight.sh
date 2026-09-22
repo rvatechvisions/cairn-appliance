@@ -1396,7 +1396,24 @@ capability_dhcp() {
   local stamp_commit
   stamp_commit="$(git -C "${HERE}" rev-parse HEAD 2>/dev/null || echo "")"
 
-  if ! (cd "${HERE}/preflight" && go build -trimpath -ldflags "-X main.commit=${stamp_commit}" -o preflight . 2>&1 | sed 's/^/  /'); then
+  # ## The tag too, and its absence is a different fact from the commit's
+  #
+  # `main.version` was never passed, so every binary reported `no-tag` --
+  # including one built from a tagged release. That was never WRONG, which is
+  # why it went unnoticed for so long: it was permanently uninformative. The
+  # commit says which bytes; the tag says which release, and only the second is
+  # the thing a person says out loud.
+  #
+  # `--exact-match` deliberately: a commit that is not itself tagged has no
+  # release, and `git describe` without it would answer with the nearest tag
+  # plus a distance, which reads like a release and is not one. An untagged
+  # build says `no-tag`, which is true.
+  local stamp_version
+  stamp_version="$(git -C "${HERE}" describe --tags --exact-match 2>/dev/null || echo "")"
+
+  if ! (cd "${HERE}/preflight" && go build -trimpath \
+          -ldflags "-X main.commit=${stamp_commit} -X main.version=${stamp_version}" \
+          -o preflight . 2>&1 | sed 's/^/  /'); then
     say "REFUSED: the probe's dependencies resolved and it did not compile."
     say ""
     say "  THIS IS THE CODE, NOT THIS HOST. The probe compiled and ran on this"
@@ -1451,9 +1468,10 @@ capability_dhcp() {
       ;;
   esac
 
-  say "  built: $(date '+%Y-%m-%d %H:%M:%S') — ${reported}"
-
-  say "  built: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'timestamp unreadable')"
+  # One line, not two. This printed `built:` twice in a row -- once with the
+  # stamp and once with the file's timestamp -- which reads as one fact stated
+  # twice with different values rather than as two facts.
+  say "  built: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S') — ${reported}"
 
   # Each server asked and answered on its own. A site with six DHCP servers
   # where one refuses is a different fact from a site with five servers, and

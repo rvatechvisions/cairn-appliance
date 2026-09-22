@@ -365,8 +365,17 @@ into and no endpoint to fetch it from. Saying so plainly matters: a guide that
 told you to enter it in the portal would have you hunting for a screen that is
 not there.
 
-**Preflight needs none of it.** It reads and submits nothing, and it **asks for
-the password itself** when you run it — there is no variable to set up first.
+**Preflight needs none of it.** It collects nothing, and on the lab path —
+a box with no appliance key, or one that was never told a portal — it
+**asks for the password itself** when you run it, with no variable to set
+up first and nothing sent anywhere.
+
+**An enrolled box does not take this path at all.** It fetches the
+credential from the portal, uses the domain, controller and account the
+portal holds, and reports which capabilities answered when the run ends.
+Nothing is typed, and a leftover `CAIRN_REALM`, `CAIRN_DC` or
+`CAIRN_PRINCIPAL` that disagrees with the portal stops the run by name
+rather than reaching a domain controller.
 
 The password is read without echo, held in preflight's own process rather than
 in your shell's environment, and used to fill one in-memory ticket cache that

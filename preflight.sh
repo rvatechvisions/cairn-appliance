@@ -23,11 +23,22 @@
 # answered, what refused, and what each one said. The person reading it is the
 # one who knows what the site is meant to look like.
 #
-# ## It submits nothing
+# ## It collects nothing, and it reports only what it reached
 #
-# No portal, no token, no upload, no outbound call of any kind beyond the
-# customer's own domain controllers. What it writes goes to the screen, and to
-# a file only if the operator asks for one.
+# **The original claim was "no outbound call of any kind" and it is
+# withdrawn rather than reworded.** An enrolled box fetches its credential
+# from the portal and, at the end, posts what the run reached. Both calls
+# are to us and to nowhere else.
+#
+# What the report carries is the name of each capability and one of three
+# states, with a reason where it did not answer. **No device, no lease, no
+# address, no account name and no part of the directory.** Inventory has
+# its own door with its own rules; nothing here writes through it.
+#
+# The narrower sentence is the one a domain administrator relies on, and a
+# weaker sentence guarded by a stronger claim is the worst arrangement of
+# the two: the claim reads true, the sentence is wrong, and nobody finds
+# out until a client reads it.
 #
 set -uo pipefail
 
@@ -51,9 +62,132 @@ fi
 # shellcheck disable=SC1090
 . "$SETTINGS"
 
-REALM="${CAIRN_REALM:-}"
-DC="${CAIRN_DC:-}"
-PRINCIPAL="${CAIRN_PRINCIPAL:-}"
+# What settings.env still carries, kept UNDER ITS OWN NAMES rather than
+# loaded straight into the three variables the run uses.
+#
+# **The portal is the only source of the domain, the controller, the
+# account and the password**, and an enrolled box takes all four from it.
+# What is left in settings.env is a leftover from before that was true, and
+# a leftover that DISAGREES is refused by name -- because the failure it
+# produces otherwise is a Kerberos error naming neither file.
+#
+# Two sources of truth for one fact is not a configuration question. It is
+# the shape where a client renames a domain controller, the portal is
+# updated, and a box goes on presenting a credential to a host that has
+# gone -- with both records looking correct to whoever reads one of them.
+LOCAL_REALM="${CAIRN_REALM:-}"
+LOCAL_DC="${CAIRN_DC:-}"
+LOCAL_PRINCIPAL="${CAIRN_PRINCIPAL:-}"
+
+# The values the run will actually use. Filled from the portal when there
+# is one, and from the file when this is the lab path.
+REALM="$LOCAL_REALM"
+DC="$LOCAL_DC"
+PRINCIPAL="$LOCAL_PRINCIPAL"
+
+# Where each of the three came from, so the run can say so rather than
+# leaving somebody to infer it from a value they cannot check.
+FIELD_SOURCE="settings.env"
+
+# Set when the credential step could not produce one, and it carries the
+# reason. **A run that could not start is not a run that found nothing**,
+# and this is the variable that keeps the two apart all the way to the
+# portal's card.
+CRED_FAILED=0
+CRED_REASON=""
+
+# When this run began, in UTC, stamped once and reported with the run.
+# A report with no time is a present-tense claim from evidence of unknown
+# age.
+RUN_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Agreement between the portal and a leftover, for one field.
+#
+# **Case-insensitively**, and that is the fact rather than a leniency: a
+# Kerberos realm is conventionally upper case and a client types their own
+# domain in lower case, a DNS host name is case-insensitive by
+# specification, and an Active Directory account name is too. Comparing
+# display bytes would refuse a box whose settings file says exactly the
+# same thing in a different case -- which is a comparison that is right
+# about bytes and wrong about the fact.
+agrees() {
+  local left right
+  left="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  right="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+  [ "$left" = "$right" ]
+}
+
+# Read the portal's credential block, and set four globals from it.
+#
+# **A function of its own so that something can drive it.** It was written
+# inline, where the only way to exercise it was to run the whole script
+# against a live portal -- which is the arrangement that leaves a parser
+# proven by the one input its author happened to have.
+#
+# The format: name=value lines, a blank line, then the password as the
+# REMAINDER to end of input. Nothing is quoted and nothing is escaped, so a
+# password containing an equals sign, a quotation mark, a backslash or a
+# newline arrives exactly as the portal sent it. Quoting would be a second
+# place for a credential to be mangled, and this project has lost a .env
+# secret to exactly that.
+PC_USERNAME=""
+PC_REALM=""
+PC_CONTROLLER=""
+PC_PASSWORD=""
+parse_credential_block() {
+  PC_USERNAME=""
+  PC_REALM=""
+  PC_CONTROLLER=""
+  PC_PASSWORD=""
+
+  local in_header=1 pw_started=0 line
+
+  while IFS= read -r line; do
+    if [ "$in_header" -eq 1 ]; then
+      if [ -z "$line" ]; then
+        in_header=0
+        continue
+      fi
+      case "$line" in
+        username=*)   PC_USERNAME="${line#username=}" ;;
+        realm=*)      PC_REALM="${line#realm=}" ;;
+        controller=*) PC_CONTROLLER="${line#controller=}" ;;
+      esac
+    elif [ "$pw_started" -eq 0 ]; then
+      # **A flag rather than a test for emptiness.** A password whose first
+      # line is blank would otherwise have its second line written over the
+      # top of it: an empty accumulator and an accumulator holding an empty
+      # first line are different states, and only a flag tells them apart.
+      PC_PASSWORD="$line"
+      pw_started=1
+    else
+      PC_PASSWORD="${PC_PASSWORD}
+${line}"
+    fi
+  done
+}
+
+# Refuse a leftover that disagrees, naming BOTH values.
+#
+# Named rather than described: "settings.env disagrees with the portal" is
+# a sentence somebody has to go and investigate, and the two strings side
+# by side is the investigation.
+refuse_disagreement() {
+  local field="$1" portal_value="$2" local_value="$3"
+  say ""
+  say "REFUSING TO CONTINUE: ${field} is set in two places and they disagree."
+  say "  the portal says:  ${portal_value}"
+  say "  ${SETTINGS} says: ${local_value}"
+  say ""
+  say "  The portal is the only source of this. Remove CAIRN_REALM, CAIRN_DC"
+  say "  and CAIRN_PRINCIPAL from ${SETTINGS} and run this again, or correct"
+  say "  the connection in the portal if the file is the one that is right."
+  say ""
+  say "  Nothing was asked of the domain. Presenting a credential built from"
+  say "  two records that disagree is how a box authenticates against a host"
+  say "  that has been renamed, and the error it produces names neither."
+  exit 1
+}
 
 # kinit prints a prompt LABEL even when the password arrives on a pipe, and
 # this removes it. It is NOT a prompt: stdin is a pipe on both paths, and the
@@ -78,7 +212,8 @@ say "dc        ${DC:-<unset>}"
 say "principal ${PRINCIPAL:-<unset>}"
 say "dhcp      ${DHCP_SERVERS:-<unset>}"
 say ""
-say "Read-only throughout. Nothing is submitted anywhere."
+say "Read-only throughout. Nothing is collected, and the only thing sent"
+say "anywhere is which capabilities answered, to the portal, at the end."
 say "No credential is written down by this script, and none is printed."
 
 # ---------------------------------------------------------------------------
@@ -272,17 +407,81 @@ capability_credential_source() {
     # stderr and once for the value -- which would have spent a nonce on a
     # request whose answer was thrown away, and left the operator reading the
     # diagnostics of a fetch that was not the one that counted.
-    fetched="$("${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -fetch -emit)" || fetch_status=$?
+    # -emit-credential, never -emit: the portal supplies four fields and
+    # this box uses all four. The header lines carry no secret and the
+    # password is the remainder after the blank line, so nothing has to be
+    # quoted and a password containing any byte at all survives.
+    fetched="$("${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -fetch -emit-credential)" || fetch_status=$?
 
     if [ "$fetch_status" -eq 0 ] && [ -n "$fetched" ]; then
-      CAIRN_PASSWORD="$fetched"
-      export CAIRN_PASSWORD
+      parse_credential_block <<< "$fetched"
       unset fetched
+
+      local portal_username="$PC_USERNAME"
+      local portal_realm="$PC_REALM"
+      local portal_controller="$PC_CONTROLLER"
+      CAIRN_PASSWORD="$PC_PASSWORD"
+
+      # **A header that never arrived is a refusal, not a blank password.**
+      # This is the shape a half-pulled box takes: an older binary answering
+      # -emit-credential with a bare password, or a newer portal answering
+      # something this script does not recognise. Handing whatever came back
+      # to kinit would put a failed logon in a customer’s domain.
+      if [ -z "$portal_username" ] || [ -z "${CAIRN_PASSWORD:-}" ]; then
+        say ""
+        say "REFUSED: the portal’s answer did not carry the fields this run needs."
+        say "  Expected a username line and a password after a blank line."
+        say "  The usual cause is a binary and a script from different pulls:"
+        say "  run git pull --ff-only in the appliance repository, rebuild, and"
+        say "  try again. Nothing was typed and nothing was sent to the domain."
+        REFUSED=$((REFUSED + 1))
+        CRED_FAILED=1
+        CRED_REASON="the portal’s answer did not carry the expected fields"
+        return 1
+      fi
+
+      export CAIRN_PASSWORD
+
+      # **The leftover is checked against the portal before anything uses
+      # either.** A disagreement is refused here, with both values named,
+      # rather than at the KDC where the message names neither.
+      if [ -n "$LOCAL_PRINCIPAL" ] && ! agrees "$LOCAL_PRINCIPAL" "$portal_username"; then
+        refuse_disagreement "the service account" "$portal_username" "$LOCAL_PRINCIPAL"
+      fi
+      if [ -n "$portal_realm" ] && [ -n "$LOCAL_REALM" ] \
+         && ! agrees "$LOCAL_REALM" "$portal_realm"; then
+        refuse_disagreement "the domain" "$portal_realm" "$LOCAL_REALM"
+      fi
+      if [ -n "$portal_controller" ] && [ -n "$LOCAL_DC" ] \
+         && ! agrees "$LOCAL_DC" "$portal_controller"; then
+        refuse_disagreement "the domain controller" "$portal_controller" "$LOCAL_DC"
+      fi
+
+      # The portal's values win where it has one. Where it has none -- a
+      # connection saved before those columns existed -- the file is used and
+      # the run says so, because a value silently coming from somewhere else
+      # is the thing this whole change is against.
+      PRINCIPAL="$portal_username"
+      [ -n "$portal_realm" ] && REALM="$portal_realm"
+      [ -n "$portal_controller" ] && DC="$portal_controller"
+      FIELD_SOURCE="the portal"
 
       say ""
       say "CREDENTIAL SOURCE: the portal, fetched for this run."
       say "  It was not typed, is not on this disk, and goes no further than"
       say "  this process and one memory-backed ticket cache."
+      say ""
+      say "  account:    ${PRINCIPAL}"
+      if [ -n "$portal_realm" ]; then
+        say "  domain:     ${REALM}"
+      else
+        say "  domain:     ${REALM}  (from ${SETTINGS}; the portal has none)"
+      fi
+      if [ -n "$portal_controller" ]; then
+        say "  controller: ${DC}"
+      else
+        say "  controller: ${DC}  (from ${SETTINGS}; the portal has none)"
+      fi
       FOUND=$((FOUND + 1))
       return 0
     fi
@@ -298,6 +497,8 @@ capability_credential_source() {
     say "  revoked appliance, a clock more than five minutes out, or no"
     say "  credential saved on that connection yet."
     REFUSED=$((REFUSED + 1))
+    CRED_FAILED=1
+    CRED_REASON="the portal would not hand over a credential"
     return 1
   fi
 
@@ -332,9 +533,102 @@ capability_credential_source() {
   say "  Do not put a password in ${SETTINGS}."
   say "  This script refuses to start if it finds one there."
   UNASKED=$((UNASKED + 1))
+  CRED_FAILED=1
+  CRED_REASON="no credential source, and no terminal to ask at"
   return 1
 }
-capability_credential_source
+capability_credential_source || true
+
+# ---------------------------------------------------------------------------
+# Recording what each capability did, so the run can be reported.
+#
+# **Derived from the counters that already exist, not from a second tally.**
+# Every capability already increments exactly one of FOUND, REFUSED and
+# UNASKED, so the state is whichever one moved. A parallel set of variables
+# updated at each of the twenty-five increment sites would be a second
+# description of the same fact, free to drift from the first -- and the one
+# that drifts is whichever is read less, which would be the one that only
+# a portal card ever sees.
+#
+# The capability function is redirected rather than piped. A pipeline puts
+# it in a subshell and the counter it increments is lost, which would leave
+# every capability reported as though it did nothing.
+# ---------------------------------------------------------------------------
+CAP_JSON=""
+
+# A reason, reduced to something that cannot break the JSON it goes into.
+#
+# **Characters are dropped rather than escaped**, deliberately. Escaping in
+# shell is the thing this project has lost a .env secret, a test file and a
+# SQL placeholder to; dropping a quote costs a reader one punctuation mark
+# and cannot produce a report the portal reads as something else.
+json_safe() {
+  printf '%s' "$1" | tr -d '\\"' | tr -cd '[:print:]' | cut -c1-300
+}
+
+# The first line in which the capability named a refusal or a skip.
+#
+# **A capability that did not answer must say why**, and the portal refuses
+# a report where one does not -- so a reason that cannot be found is stated
+# as exactly that rather than left blank. *A check that cannot run looks
+# exactly like a check that found nothing*, and this is the one place the
+# difference would otherwise disappear.
+first_reason() {
+  local log="$1" line
+  line="$(grep -m1 -E '^(REFUSED|NOT ASKED|PARTLY):' "$log" 2>/dev/null || true)"
+  if [ -z "$line" ]; then
+    printf '%s' "this run did not record a reason; read the appliance output"
+    return 0
+  fi
+  printf '%s' "${line#*: }"
+}
+
+run_capability() {
+  local name="$1" fn="$2"
+  local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED
+  local log state reason status
+
+  log="$(mktemp)"
+
+  "$fn" >"$log" 2>&1
+  status=$?
+
+  cat "$log"
+
+  if [ "$FOUND" -gt "$before_found" ]; then
+    state="reached"
+    reason=""
+  elif [ "$REFUSED" -gt "$before_refused" ]; then
+    state="refused"
+    reason="$(first_reason "$log")"
+  elif [ "$UNASKED" -gt "$before_unasked" ]; then
+    state="not-asked"
+    reason="$(first_reason "$log")"
+  else
+    # No counter moved, which is not one of the three states and is not
+    # silently folded into one. It is a defect in this script and the
+    # report says so rather than reporting a network fact nobody observed.
+    state="not-asked"
+    reason="this capability recorded no outcome; that is a fault in preflight.sh"
+  fi
+
+  rm -f "$log"
+
+  local entry
+  if [ -n "$reason" ]; then
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"reason\":\"$(json_safe "$reason")\"}"
+  else
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\"}"
+  fi
+
+  if [ -z "$CAP_JSON" ]; then
+    CAP_JSON="$entry"
+  else
+    CAP_JSON="${CAP_JSON},${entry}"
+  fi
+
+  return $status
+}
 
 # ---------------------------------------------------------------------------
 # 1. Kerberos
@@ -623,7 +917,7 @@ capability_kerberos() {
   REFUSED=$((REFUSED + 1))
   return 1
 }
-capability_kerberos
+run_capability kerberos capability_kerberos || true
 KERBEROS_OK=$?
 
 # ---------------------------------------------------------------------------
@@ -812,7 +1106,7 @@ capability_ldap() {
   REFUSED=$((REFUSED + 1))
   return 1
 }
-capability_ldap
+run_capability ldap capability_ldap || true
 LDAP_OK=$?
 
 # ---------------------------------------------------------------------------
@@ -860,7 +1154,7 @@ capability_dns() {
   FOUND=$((FOUND + 1))
   return 0
 }
-capability_dns
+run_capability dns-zones capability_dns || true
 
 # ---------------------------------------------------------------------------
 # 4. The authorised DHCP servers, from the directory
@@ -947,7 +1241,7 @@ capability_authorized_servers() {
   FOUND=$((FOUND + 1))
   return 0
 }
-capability_authorized_servers
+run_capability dhcp-authorised capability_authorized_servers || true
 
 # ---------------------------------------------------------------------------
 # 5. DHCP over MS-DHCPM
@@ -1204,7 +1498,7 @@ capability_dhcp() {
   REFUSED=$((REFUSED + 1))
   return 1
 }
-capability_dhcp
+run_capability dhcp capability_dhcp || true
 
 # ---------------------------------------------------------------------------
 rule "what this appliance can reach"
@@ -1237,7 +1531,75 @@ if [ "$FOUND" -gt 0 ] && [ "$REFUSED" -gt 0 ]; then
   say ""
 fi
 
-say "Nothing was submitted anywhere, and nothing on the domain was changed."
+# ---------------------------------------------------------------------------
+# Reporting the run
+#
+# **What it reached, never what it found.** No device, no lease, no address
+# goes through this door: inventory has its own, with its own paging, its
+# own ledger and its own retirement rules, and a second writer into that
+# table with none of them is what retirement by set difference is
+# unforgiving about.
+#
+# **Nothing here is a verdict.** Whether four capabilities out of five is
+# good is a judgement with a source and a review date and it belongs in the
+# rule store. This says what happened.
+# ---------------------------------------------------------------------------
+submit_run_report() {
+  local finished payload status
+  finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if [ ! -f "${CONFIG_DIR}/appliance.key" ] || [ -z "${CAIRN_PORTAL:-}" ]; then
+    say ""
+    say "NOT REPORTED: this box is not enrolled, or was not told a portal."
+    say "  The run above stands on its own. Nothing was submitted anywhere."
+    return 0
+  fi
+
+  payload="$(mktemp)"
+
+  # **A run that could not start carries a reason and NO capability list.**
+  # An empty list is a claim about the domain; an absent list is the absence
+  # of a claim, and a box that never got a credential has made no claim.
+  if [ "$CRED_FAILED" -eq 1 ]; then
+    {
+      printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
+      printf ',"outcome":"could-not-start","reason":"%s"}' "$(json_safe "$CRED_REASON")"
+    } >"$payload"
+  else
+    {
+      printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
+      printf ',"outcome":"ran","capabilities":[%s]}' "$CAP_JSON"
+    } >"$payload"
+  fi
+
+  # The binary signs and sends. The file is written first and acted on
+  # second: a payload travelling through a shell quote is the failure this
+  # project has had nine of.
+  status=0
+  "${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -report <"$payload" >/dev/null \
+    || status=$?
+
+  rm -f "$payload"
+
+  if [ "$status" -eq 0 ]; then
+    say ""
+    say "REPORTED: the portal has what this run reached, and when."
+    say "  The connection card now says so instead of \"Not yet verified\"."
+  else
+    # **A refused report is said out loud rather than swallowed.** The run
+    # itself still stands -- what it reached is on the screen above -- and
+    # a silent failure here would leave a card asserting a stale reading
+    # with nobody aware it had stopped being updated.
+    say ""
+    say "NOT REPORTED: the portal refused the report (exit ${status})."
+    say "  The reason is on stderr above. The run itself is unaffected: what"
+    say "  it reached is printed above and nothing about it is in doubt."
+  fi
+}
+submit_run_report
+
+say ""
+say "Nothing was collected and nothing on the domain was changed."
 
 # Exit non-zero only when something was genuinely refused. Nothing-asked is not
 # a failure of this host; it is a gap in what it was told.

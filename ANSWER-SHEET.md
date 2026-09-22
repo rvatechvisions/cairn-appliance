@@ -127,8 +127,13 @@ go build .` and correct the names the compiler objects to.
 **Preflight asserts no expected count.** It will not tell you the site is
 missing a DHCP server or a zone. It cannot know. It prints what answered.
 
-**Nothing is submitted anywhere.** Preflight reads. It does not collect and it
-does not upload.
+**Nothing is collected.** Preflight reads. No device, no lease, no address
+and no part of the directory leaves the host.
+
+**An enrolled box does send one thing, at the end: which capabilities
+answered.** Each one by name, in one of three states, with a reason where
+it did not answer — to the portal, and nowhere else. A box that is not
+enrolled, or has not been told a portal, sends nothing and says so.
 
 ## The credential, in four lines
 

@@ -40,6 +40,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -224,6 +225,25 @@ func main() {
 	keyFile := flag.String("keyfile", keyPath, "where this appliance keeps its private key")
 	emit := flag.Bool("emit", false,
 		"with -fetch: write ONLY the password to stdout, everything else to stderr")
+	// **-emit-credential is a second flag rather than a change to -emit, and
+	// the reason is what a partial pull would do.**
+	//
+	// -emit writes the password and nothing else, which is a contract a script
+	// relies on. A new binary that changed that contract, run by a preflight.sh
+	// somebody had not pulled yet, would hand the whole block to kinit as a
+	// password -- and a failed logon against a customer's domain controller is
+	// a security event in THEIR tenant. One failed authentication is a stop,
+	// not a cost of upgrading.
+	//
+	// So the old spelling keeps its old meaning, the new spelling is a name an
+	// old binary refuses outright, and a half-pulled box fails loudly in the
+	// one direction that asks nothing of anybody's KDC.
+	emitCredential := flag.Bool("emit-credential", false,
+		"with -fetch: write every field the portal supplied, password last")
+	// Posting what a run reached. The report arrives on stdin, already
+	// serialised, and is signed and sent unchanged.
+	report := flag.Bool("report", false,
+		"read a run report from stdin and post it to the portal, signed")
 	agreement := flag.Bool("agreement-fixture", false,
 		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
@@ -255,9 +275,10 @@ func main() {
 		return
 	}
 
-	if *enrolling || *fetch {
+	if *enrolling || *fetch || *report {
 		if *portalURL == "" {
-			fmt.Fprintln(os.Stderr, "preflight: -portal is required with -enrol or -fetch")
+			fmt.Fprintln(os.Stderr,
+				"preflight: -portal is required with -enrol, -fetch or -report")
 			os.Exit(2)
 		}
 
@@ -306,7 +327,36 @@ func main() {
 			os.Exit(2)
 		}
 
-		username, password, err := fetchCredential(*portalURL, bound, private)
+		if *report {
+			/*
+			 * Read to EOF and send those bytes. **Not parsed here**, because a
+			 * report this binary re-encoded would be signed over one spelling
+			 * and sent as another -- and the portal hashes what arrives.
+			 *
+			 * The portal is the thing that judges whether it is a valid report.
+			 * Validating it twice would be two sets of rules about what a
+			 * report is, and the one that drifts is the copy used less.
+			 */
+			payload, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "preflight: reading the report from stdin:", err)
+				os.Exit(2)
+			}
+			if len(bytes.TrimSpace(payload)) == 0 {
+				fmt.Fprintln(os.Stderr, "preflight: no run report arrived on stdin")
+				os.Exit(2)
+			}
+
+			if err := reportRun(*portalURL, bound, private, payload); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("run reported")
+			return
+		}
+
+		credential, err := fetchCredential(*portalURL, bound, private)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "preflight:", err)
 			os.Exit(1)
@@ -320,9 +370,39 @@ func main() {
 		// It is a flag rather than the default because the default is a person
 		// running this by hand, and for them a password on stdout is a password
 		// in a scrollback.
+		if *emitCredential {
+			/*
+			 * **The password is last and is the remainder**, which is what makes
+			 * this parseable without quoting anything.
+			 *
+			 * Everything before the blank line is name=value and carries no
+			 * secret. Everything after it is the password, byte for byte, to
+			 * the end of the stream -- so a password containing an equals sign,
+			 * a newline or the word "password" cannot be misread as a header.
+			 * A quoting scheme here would be a second place for a credential to
+			 * be mangled, and this project has lost a .env secret to exactly
+			 * that.
+			 *
+			 * A field the portal did not supply is OMITTED rather than sent
+			 * empty: absent is what lets the caller tell "the portal has no
+			 * value for this" from "the portal says it is blank".
+			 */
+			fmt.Fprintln(os.Stderr, "credential fetched for", credential.Username)
+			fmt.Printf("username=%s\n", credential.Username)
+			if credential.Realm != "" {
+				fmt.Printf("realm=%s\n", credential.Realm)
+			}
+			if credential.Controller != "" {
+				fmt.Printf("controller=%s\n", credential.Controller)
+			}
+			fmt.Print("\n")
+			fmt.Print(credential.Password)
+			return
+		}
+
 		if *emit {
-			fmt.Fprintln(os.Stderr, "credential fetched for", username)
-			fmt.Print(password)
+			fmt.Fprintln(os.Stderr, "credential fetched for", credential.Username)
+			fmt.Print(credential.Password)
 			return
 		}
 
@@ -330,8 +410,14 @@ func main() {
 		// credential in a terminal buffer, a shell history and a run-command
 		// log is a smaller version of the thing this whole design is for.
 		fmt.Println("credential fetched")
-		fmt.Println("username:", username)
-		fmt.Printf("password:  %d characters, not printed\n", len(password))
+		fmt.Println("username:", credential.Username)
+		if credential.Realm != "" {
+			fmt.Println("realm:", credential.Realm)
+		}
+		if credential.Controller != "" {
+			fmt.Println("controller:", credential.Controller)
+		}
+		fmt.Printf("password:  %d characters, not printed\n", len(credential.Password))
 		return
 	}
 

@@ -213,12 +213,34 @@ func enrol(portal, registrationKey string, private ed25519.PrivateKey) (string, 
 // THIS REQUEST CARRIES NO BODY. The signed bytes hash an empty one, so a body
 // on the wire would be something added after signing -- and the portal refuses
 // it before verification for exactly that reason.
-func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (string, string, error) {
+// directoryCredential is everything the portal knows about how to reach a
+// customer's directory, and it is ALL OF IT.
+//
+// **The portal is the only source of these four.** They travel together
+// because they are one fact: a principal and a password are unusable without
+// knowing which realm they belong to and which host to present them to, and
+// splitting them puts half the answer in a settings file on the box -- the
+// half nobody updates when a client renames a domain controller.
+//
+// Realm and Controller are EMPTY rather than absent when the portal has none.
+// A connection saved before those columns existed answers without them, and an
+// empty string here is what lets the caller tell "the portal did not say" from
+// "the portal said this".
+type directoryCredential struct {
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Realm      string `json:"realm"`
+	Controller string `json:"controller"`
+}
+
+func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (directoryCredential, error) {
 	const path = "/appliance/credential"
+
+	var empty directoryCredential
 
 	nonceBytes := make([]byte, 16)
 	if _, err := rand.Read(nonceBytes); err != nil {
-		return "", "", fmt.Errorf("generating a nonce: %w", err)
+		return empty, fmt.Errorf("generating a nonce: %w", err)
 	}
 
 	// RFC 3339 in UTC, second precision, which is what the verifier parses.
@@ -231,7 +253,7 @@ func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (st
 
 	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(portal, "/")+path, nil)
 	if err != nil {
-		return "", "", err
+		return empty, err
 	}
 	request.Header.Set("Cairn-Appliance", fingerprint)
 	request.Header.Set("Cairn-Timestamp", timestamp)
@@ -240,7 +262,7 @@ func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (st
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return "", "", fmt.Errorf("reaching the portal: %w", err)
+		return empty, fmt.Errorf("reaching the portal: %w", err)
 	}
 	defer response.Body.Close()
 
@@ -255,20 +277,83 @@ func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (st
 		}
 		_ = json.Unmarshal(body, &refusal)
 		if refusal.Error != "" {
-			return "", "", fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
+			return empty, fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
 		}
-		return "", "", fmt.Errorf("refused (%d)", response.StatusCode)
+		return empty, fmt.Errorf("refused (%d)", response.StatusCode)
 	}
 
-	var credential struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
+	var credential directoryCredential
 	if err := json.Unmarshal(body, &credential); err != nil {
-		return "", "", fmt.Errorf("the portal's answer did not parse: %w", err)
+		return empty, fmt.Errorf("the portal's answer did not parse: %w", err)
 	}
 
-	return credential.Username, credential.Password, nil
+	return credential, nil
+}
+
+// runReportPath and runReportContentType name the other door.
+//
+// **The media type is not decoration.** The portal registers a parser for this
+// one string so that one route sees the bytes as they arrived; everything else
+// goes on being parsed as it was. A report sent as application/json reaches a
+// handler that has an object and not the bytes the signature covers, and the
+// portal refuses it rather than hashing a re-serialisation -- which is exactly
+// where two implementations of one spec diverge.
+const runReportPath = "/appliance/run"
+const runReportContentType = "application/vnd.cairn.run+json"
+
+// reportRun posts what a run reached.
+//
+// **The bytes are sent exactly as they were signed.** The report arrives here
+// already serialised, from the caller, and is neither parsed nor re-encoded on
+// the way through: a report this binary re-serialised would be signed over one
+// spelling and sent as another.
+func reportRun(portal, fingerprint string, private ed25519.PrivateKey, report []byte) error {
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return fmt.Errorf("generating a nonce: %w", err)
+	}
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+
+	signature := ed25519.Sign(private, canonicalBytes(
+		http.MethodPost, runReportPath, fingerprint, timestamp, nonce, bodyHash(report),
+	))
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		strings.TrimRight(portal, "/")+runReportPath,
+		bytes.NewReader(report),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", runReportContentType)
+	request.Header.Set("Cairn-Appliance", fingerprint)
+	request.Header.Set("Cairn-Timestamp", timestamp)
+	request.Header.Set("Cairn-Nonce", nonce)
+	request.Header.Set("Cairn-Signature", base64.StdEncoding.EncodeToString(signature))
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("reaching the portal: %w", err)
+	}
+	defer response.Body.Close()
+
+	body, _ := io.ReadAll(response.Body)
+
+	if response.StatusCode != http.StatusAccepted {
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &refusal)
+		if refusal.Error != "" {
+			return fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
+		}
+		return fmt.Errorf("refused (%d)", response.StatusCode)
+	}
+
+	return nil
 }
 
 // assertSigningKey is the guard that would catch a signature this binary

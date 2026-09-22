@@ -3,9 +3,10 @@
 A Linux host inside a customer's network that reads Active Directory, the DNS
 zones held in it, and DHCP — and submits what it reads to Cairn.
 
-**Nothing in this repository is in front of a customer yet.** `preflight.sh`
-answers what a host can reach; it collects nothing and submits nothing. The
-collector is a separate thing and is not here.
+**`preflight.sh` answers what a host can reach. It collects nothing** —
+no device, no lease, no address — and an enrolled box reports which
+capabilities answered, to the portal, at the end of a run. The collector
+is a separate thing and is not here.
 
 ---
 
@@ -424,12 +425,25 @@ expectation produces a confident wrong verdict about somebody else's network.
 It prints what answered, what refused, and what each one said. The person
 reading it is the one who knows what the site is meant to look like.
 
-### It submits nothing
+### It collects nothing, and reports only what it reached
 
-No portal, no token, no upload, no outbound call of any kind beyond the
-customer's own domain controllers. Output goes to the screen. It writes a file
-only if you ask for one, and that file is in `.gitignore` because it contains a
-customer's host names and addresses.
+**This section said "no outbound call of any kind" and that is withdrawn
+rather than reworded.** An enrolled box makes two calls, both to the
+portal and to nowhere else: it fetches the directory credential at the
+start of a run, and at the end it posts what the run reached.
+
+What that report carries is the name of each capability, one of three
+states, and a reason where it did not answer. **No device, no lease, no
+address, no account name, no part of the directory.** Inventory has its
+own door with its own paging and its own retirement rules; nothing in
+`preflight.sh` writes through it.
+
+Output still goes to the screen, and it writes a file only if you ask for
+one — that file is in `.gitignore` because it contains a customer's host
+names and addresses.
+
+**A box that is not enrolled, or has not been told a portal, sends
+nothing at all** and says so at the end of the run.
 
 ---
 

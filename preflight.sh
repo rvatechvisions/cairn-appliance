@@ -1388,11 +1388,16 @@ capability_dhcp() {
 
   # The commit is stamped in, and the stamp is READ BACK below.
   #
-  # A binary that cannot say what it is gives the digest pin nothing to check
-  # against, and `-X main.commit=` fails SILENTLY: a wrong symbol path, a
-  # renamed variable or a quoting slip all produce a clean build and an empty
-  # stamp. That is *absence of output read as absence of finding* in a linker
-  # flag, so the build is not trusted to have done it.
+  # `-X main.commit=` fails SILENTLY: a wrong symbol path, a renamed variable
+  # or a quoting slip all produce a clean build and an empty stamp. That is
+  # *absence of output read as absence of finding* in a linker flag, so the
+  # build is not trusted to have done it.
+  #
+  # **The stamp is worth having on its own**, which is worth saying because
+  # it was justified by something that does not exist: a digest pin. There
+  # is none -- nothing here or in the portal compares these bytes with
+  # anything. What the stamp buys today is that a person reading a run can
+  # say which commit produced the binary, which is the whole of it.
   local stamp_commit
   stamp_commit="$(git -C "${HERE}" rev-parse HEAD 2>/dev/null || echo "")"
 
@@ -1448,9 +1453,22 @@ capability_dhcp() {
   # READ THE STAMP BACK, and refuse a build that did not take one.
   #
   # This is the one question the binary can answer about itself with
-  # certainty, and it is the input to the update decision: the appliance
-  # refuses to run bytes whose digest does not match what the portal named.
-  # An unstamped binary cannot participate in that at all.
+  # certainty.
+  #
+  # **NOT YET A DIGEST PIN, and this comment used to say otherwise.** It
+  # asserted, in the present tense, that the appliance would decline a binary
+  # whose fingerprint disagreed with one the portal had supplied -- a control
+  # nobody has built. Nothing compares these bytes with anything.
+  #
+  # The withdrawn wording is described rather than written, because the
+  # assertion in `stamp-test.sh` reads this file for exactly that sentence
+  # and cannot tell an account of it from an instance. It caught this
+  # paragraph on its first run.
+  #
+  # What a pin needs is a far side: the portal naming an expected digest, and
+  # this script refusing a binary that does not match it. That is a schema
+  # change, a portal surface and a deploy, and it is not started. The stamp
+  # is the half that exists and it stands on its own.
   local reported
   reported="$("$binary" -version 2>&1)"
 
@@ -1461,8 +1479,9 @@ capability_dhcp() {
       say ""
       say "  The linker flag produced no commit. A wrong symbol path, a renamed"
       say "  variable or a quoting slip all build cleanly and stamp nothing, so"
-      say "  this is read back rather than assumed. A binary that cannot say what"
-      say "  it is gives the digest pin nothing to check against."
+      say "  this is read back rather than assumed. A binary that cannot say"
+      say "  which commit built it cannot be matched to a review, a report or a"
+      say "  change somebody made."
       REFUSED=$((REFUSED + 1))
       return 1
       ;;

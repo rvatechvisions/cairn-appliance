@@ -121,6 +121,51 @@ fi
 
 # ---------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# The digest pin is claimed only if it exists
+# --------------------------------------------------------------------------
+#
+# ## What this is for
+#
+# `preflight.sh` described a digest pin in the PRESENT TENSE -- *the appliance
+# refuses to run bytes whose digest does not match what the portal named* --
+# in two comments and in a refusal a technician reads. **There is no such
+# control.** Nothing here or in the portal compares these bytes with anything.
+#
+# That is *product copy written from the design rather than from the thing
+# that shipped*, and the remedy this project already gives is to assert the
+# sentence and the control together, so either both move or this fails.
+#
+# It is worst in the operator-facing copy. A technician reading a refusal is
+# being told the box has a protection it does not have, at the moment they
+# are deciding whether to trust what it just built.
+#
+# ## What it will do when somebody builds the pin
+#
+# Nothing, quietly. Adding a real comparison satisfies the control side, and
+# the sentence becomes sayable in the same commit -- which is the point: the
+# claim is permitted exactly when it is true, rather than being remembered.
+
+# A claim that the bytes are checked. Deliberately broad: it is the meaning
+# that must not be asserted, not one phrasing of it.
+claims_pin="$(grep -nE 'refuses? to run bytes|digest (does not |doesn'\''t )?match|digest pin (checks|compares|refuses)' preflight.sh || true)"
+
+# The control itself: something that computes a digest of the binary and
+# compares it with a value from somewhere else.
+has_pin="$(grep -nE 'sha256sum|shasum|EXPECTED_DIGEST|expected_digest' preflight.sh || true)"
+
+if [ -z "$claims_pin" ]; then
+  ok "preflight.sh claims no digest pin, and there is none to claim"
+elif [ -n "$has_pin" ]; then
+  ok "preflight.sh claims a digest pin and computes one"
+else
+  bad "preflight.sh describes a digest check that does not exist"
+  printf '%s\n' "$claims_pin" | sed 's/^/      /'
+  printf '      Nothing in this script computes a digest or compares one.\n'
+  printf '      Either build the control or stop claiming it: an operator reading\n'
+  printf '      a refusal is being told the box protects them in a way it does not.\n'
+fi
+
 printf '\nchecks: %s, failures: %s\n' "$checks" "$fails"
 
 if [ "$checks" -eq 0 ]; then

@@ -32,10 +32,15 @@
 # detector was narrower than its subject and its silence looked like a clean
 # run, on the exact string it was built to catch.
 #
-# **The list is asserted, not remembered**: `spellcheck-reach.sh` checks that
-# every function in these scripts whose body calls `printf` or `echo` is
-# either extracted here or named as deliberately skipped. A helper added next
-# month fails until somebody decides about it.
+# **The list is asserted, not remembered**: section 2 of `spellcheck-test.sh`
+# finds every helper in these scripts that PRINTS ITS OWN ARGUMENTS and fails
+# unless this list knows it. A helper added next month fails until somebody
+# decides about it.
+#
+# It reads one line or many. The first version read one, which is how all
+# three of these are written, and that limit was documented rather than
+# closed until 22 September 2026 -- a detector narrower than its subject,
+# whose silence has the same shape as a clean run.
 #
 # ## What it deliberately does not govern
 #
@@ -43,7 +48,21 @@
 # portal parses, and they are held by `preflight-stored-values-test.sh`, which
 # asserts the exact set. Two checks with an opinion about one string is how two
 # copies of a fact come to disagree -- so this reads printed text and that one
-# reads the vocabulary.
+# reads the vocabulary. **Jackie’s ruling, 22 September 2026**, when widening
+# the extractor surfaced `json_safe`: the boundary is where it was.
+#
+# **And what a helper HANDLES is the weaker test; where its output GOES is the
+# stronger one.** `json_safe` would be out of scope on either reading, and the
+# second is the one that generalises: every call site captures it
+# -- `$(json_safe "$reason")` -- so nothing it emits reaches a terminal. Same
+# for `agrees`, which lowercases two strings and is read for an exit status.
+# Both use `printf` as a STRING OPERATION, and neither prints to anybody.
+#
+# So the classification in `spellcheck-test.sh` is mechanical rather than a
+# list: a helper whose every call site consumes its output is a transformer
+# and drops out by construction. **Default is inclusion** -- a helper whose
+# call sites are not all consumed stays in scope and fails until somebody
+# decides, which is the direction whose failure mode is a conversation.
 #
 set -uo pipefail
 

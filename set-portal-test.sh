@@ -145,6 +145,38 @@ printf 'CAIRN_PORTAL=\nCAIRN_PORTAL=%s\n' "$PORTAL" > "$order"
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# The way the runbook starts it, which is not the way the cases above do
+# ---------------------------------------------------------------------------
+#
+# Every case above runs `bash "$SCRIPT"`. That proves the behaviour and says
+# nothing about whether an operator can start it -- and on 22 September 2026
+# the box answered `sudo: ./set-portal.sh: command not found`, with this file
+# entirely green, because the script was committed 100644.
+#
+# **A harness that starts a program differently from the person starting it is
+# reporting on a different program.** So one case invokes it the way the
+# runbook writes it.
+#
+# The committed mode is asserted separately, in script-modes-test.sh, and that
+# is the assertion that travels: Git Bash emulates the execute bit, so the case
+# below passes here whatever the mode is. It is the form the defect took rather
+# than the proof against it.
+
+direct="${work}/direct.env"
+printf 'CAIRN_REALM=EXAMPLE.TEST\n' > "$direct"
+
+if "$SCRIPT" "$PORTAL" "$direct" >/dev/null 2>&1; then
+  ok "invoked as ./set-portal.sh, the way the runbook writes it"
+else
+  bad "./set-portal.sh could not be started without a leading bash"
+fi
+
+[ "$(sourced_value "$direct")" = "$PORTAL" ] \
+  && ok "and the run invoked that way did the work" \
+  || bad "started that way, it did not set CAIRN_PORTAL"
+
+
 printf '\n%s\n' "checks: ${checks}, failures: ${fails}"
 
 if [ "$checks" -eq 0 ]; then

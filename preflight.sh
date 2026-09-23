@@ -1633,15 +1633,47 @@ submit_run_report() {
   # **A run that could not start carries a reason and NO capability list.**
   # An empty list is a claim about the domain; an absent list is the absence
   # of a claim, and a box that never got a credential has made no claim.
+  # **The schedule this box is on, declared only when it IS on one.**
+  #
+  # Jackie's ruling, 23 September 2026: the appliance declares its interval in
+  # the submission and the portal holds no setting for it. The timer is the
+  # truth; a portal field would be an intention, and the two would drift the
+  # first time somebody edited the timer without opening the portal.
+  #
+  # The systemd service sets CAIRN_INTERVAL_MINUTES. **A hand run sets nothing
+  # and therefore declares nothing**, which is correct rather than a gap: a
+  # hand run is not a schedule, and the portal already has words for a
+  # collector that has submitted and is not expected again.
+  #
+  # **Said out loud rather than quietly dropped** when it is set to something
+  # that is not a schedule. The portal refuses such a value and would reject
+  # the whole report over an optional field, so it is checked here too, where
+  # the reason can be printed beside the run it belongs to. Not-found and
+  # found-clean are different results.
+  local interval_json=""
+  if [ -n "${CAIRN_INTERVAL_MINUTES:-}" ]; then
+    if printf '%s' "$CAIRN_INTERVAL_MINUTES" | grep -Eq '^[1-9][0-9]*$'; then
+      interval_json=",\"intervalMinutes\":${CAIRN_INTERVAL_MINUTES}"
+    else
+      say ""
+      say "SCHEDULE NOT DECLARED: CAIRN_INTERVAL_MINUTES is not a positive whole"
+      say "  number of minutes, so no schedule is claimed for this run. The portal"
+      say "  will say none is recorded rather than calling this box late against a"
+      say "  number nobody set."
+    fi
+  fi
+
   if [ "$CRED_FAILED" -eq 1 ]; then
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
-      printf ',"outcome":"could-not-start","reason":"%s"}' "$(json_safe "$CRED_REASON")"
+      printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
+      printf '%s}' "$interval_json"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
-      printf ',"outcome":"ran","capabilities":[%s]}' "$CAP_JSON"
+      printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
+      printf '%s}' "$interval_json"
     } >"$payload"
   fi
 

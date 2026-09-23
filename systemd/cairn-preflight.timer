@@ -1,0 +1,54 @@
+[Unit]
+# When the scheduled collection runs.
+#
+# ## Daily, early, in the box's own time zone
+#
+# Jackie's recommendation and ruling, 23 September 2026, with the reason
+# written beside it: **a district's morning is when a stale estate gets
+# noticed.** A collection that lands before the working day means the portal is
+# answering with this morning's reading when somebody opens it, rather than
+# with yesterday's.
+#
+# `OnCalendar` is resolved in the HOST's local time, which is the box's own
+# zone and is what we want. The portal renders timestamps in the
+# organization's zone for the same reason: a schedule resolved in the wrong
+# zone runs during the working day it was meant to precede.
+#
+# ## Persistent, and that is not a nicety
+#
+# A box switched off for a week runs ONCE when it comes back, rather than
+# skipping to the next window. That is *a connection that has never synced is
+# due immediately*, pointed at a host that was unplugged: the first thing
+# anybody wants after a box returns is a current reading, and the alternative
+# is a portal showing a week-old estate until the following morning.
+#
+# It runs once, not once per missed day. systemd catches up a single run.
+#
+# ## The randomised delay, and why it has a bound
+#
+# Every appliance across every client firing at the same second is how the
+# submission endpoint starts refusing -- the same reason the portal staggers
+# its own connections by a hash of the connection id. The appliance cannot
+# hash against siblings it does not know about, so a random delay inside the
+# window is the nearest equivalent that needs no coordination.
+#
+# **Tens of minutes, and no more.** Forty-five minutes spreads a fleet without
+# pushing the late end of the window into the working day: 05:00 plus at most
+# 45 minutes still lands before anybody opens the portal. A delay measured in
+# hours would spread the fleet better and would defeat the reason for the hour.
+Description=Cairn appliance preflight collection, daily
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=45min
+
+# **The interval this implements is declared to the portal by the service unit
+# beside this one**, as CAIRN_INTERVAL_MINUTES. The two are one fact in two
+# files and they have to be changed together: a timer moved to weekly with the
+# service still declaring daily would have the portal call the box late six
+# days out of seven.
+Unit=cairn-preflight.service
+
+[Install]
+WantedBy=timers.target

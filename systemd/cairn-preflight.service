@@ -1,0 +1,69 @@
+[Unit]
+# The scheduled collection.
+#
+# ## It runs the same script a person runs by hand
+#
+# Jackie's ruling, 23 September 2026: the timer runs the same binary and path a
+# person runs by hand, so what they test is what runs at four in the morning.
+#
+# That is why ExecStart names preflight.sh rather than the Go binary beneath
+# it, and why it names the installed path rather than a copy. A unit that ran
+# something subtly different would make every hand test evidence about a
+# program the timer does not execute -- which is *a probe that assembles the
+# application differently from production reports on a different application*,
+# in a unit file.
+#
+# ## It reports whatever it found
+#
+# A run reports even when capabilities fail. Found, refused and not asked is
+# the report; silence is not a state. preflight.sh already submits a run report
+# on every outcome, including could-not-start, so nothing here needs to force
+# it -- but `SuccessExitStatus` does need to say that a refusal is not a broken
+# unit. A capability that refused is a finding about the client's network, and
+# a unit that went red on it would put a real finding in the same bin as a
+# crashed script.
+Description=Cairn appliance preflight collection
+Documentation=https://github.com/rvatechvisions/cairn-appliance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# The script exits non-zero when something was genuinely REFUSED, which is a
+# fact about the client's network rather than a failure of this unit. 1 is
+# therefore a success for systemd's purposes; anything else is not.
+SuccessExitStatus=0 1
+
+# **What the box tells the portal its schedule is.**
+#
+# Jackie's ruling, 23 September 2026: the appliance declares its interval in
+# the submission and the portal holds no setting for it. The timer is the
+# truth, so the number is set HERE, beside the timer that makes it true --
+# and a hand run, which sets nothing, declares no schedule, which is correct.
+# A hand run is not a schedule.
+#
+# **Change the timer and change this together.** They are two halves of one
+# fact, which is the arrangement this project distrusts everywhere else. It is
+# accepted here because the alternative is worse: a portal field would be an
+# intention rather than a reading, and would drift with nobody able to see it.
+# What makes the drift visible instead is that the portal records when the
+# declared number last CHANGED, and the card prints it.
+#
+# 1440 = daily. It must agree with OnCalendar in the timer beside this file.
+Environment=CAIRN_INTERVAL_MINUTES=1440
+
+ExecStart=/opt/cairn-appliance/preflight.sh
+
+# Root, because the appliance key is 600 root:root and preflight.sh refuses to
+# continue if it is anything else -- a key any local user can read is this
+# appliance's identity readable by anybody with a shell on it.
+User=root
+
+# One run at a time. A collection that overruns its interval must not have a
+# second one started on top of it: two runs submitting concurrently would give
+# the portal two reports of one estate with no way to tell which is current.
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

@@ -209,7 +209,11 @@ rather than from our description of it.
 
 ### ~~The keytab is a deferral — and the domain join that was to fix it~~
 
-> **Superseded 20 September 2026, and kept rather than deleted.** Everything
+> **Superseded 20 September 2026, and kept rather than deleted.** Claude's
+> record under Jackie's standing authority, traced to `6995e71`. **The design
+> change it records is Jackie's**, 20 September 2026; the decision to keep the
+> superseded section rather than delete it is an editorial act and is Claude's.
+> A tie is not resolved toward Jackie. Everything
 > below was true when written and describes the two arrangements this design
 > replaced. It stays because the *reasoning* is what the new design is measured
 > against — in particular the paragraph explaining why file permissions are not

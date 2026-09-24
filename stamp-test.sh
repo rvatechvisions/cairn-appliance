@@ -45,18 +45,31 @@ fi
 # 1. The build passes both stamps
 # ---------------------------------------------------------------------------
 #
-# Asserted over preflight.sh rather than only through a build, because the
-# build below uses flags this test chooses. What ships is what preflight.sh
-# passes, and a test that only exercised its own flags would be reporting on
-# itself.
+# **CHANGED on 24 September 2026, not supplemented.** This asserted that
+# preflight.sh passes `-X main.commit=` and `-X main.version=`, which was
+# right while preflight.sh built the probe. **It no longer builds anything**,
+# so those flags are correctly absent and an assertion demanding them is a
+# wrong rule wearing a test's authority.
+#
+# What survives is the half that still matters: the script READS the stamp
+# and refuses to run a probe that carries none. The flags themselves are now
+# the installer's business, and this test exercises them below against a
+# build it does its own stamping for.
 
-for symbol in main.commit main.version; do
-  if grep -q -- "-X ${symbol}=" preflight.sh; then
-    ok "preflight.sh stamps ${symbol}"
-  else
-    bad "preflight.sh never passes -X ${symbol}=, so the binary cannot report it"
-  fi
-done
+if grep -q -- "-version" preflight.sh; then
+  ok "preflight.sh reads the stamp off the binary it is about to run"
+else
+  bad "preflight.sh never asks the probe what it is, so an unstamped one would run"
+fi
+
+# And it must not have quietly started building again. The rebuild is the
+# thing that was removed, and a test that only checked the stamp would pass
+# on a script that had grown one back.
+if grep -qE '^[^#]*go build' preflight.sh; then
+  bad "preflight.sh builds again: an appliance that rebuilds itself on a timer"
+else
+  ok "preflight.sh compiles nothing, so the timer cannot replace the binary"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. A stamped build reports what it was given
@@ -113,10 +126,10 @@ fi
 # 4. preflight.sh refuses an unstamped build, and the refusal is reachable
 # ---------------------------------------------------------------------------
 
-if grep -q 'STAMP DID NOT TAKE' preflight.sh; then
-  ok "preflight.sh refuses a build whose stamp did not take"
+if grep -q 'carries no commit stamp' preflight.sh; then
+  ok "preflight.sh refuses to run a probe that carries no stamp"
 else
-  bad "the unstamped refusal is gone, so a silent linker failure would ship"
+  bad "the unstamped refusal is gone, so an untraceable probe would run"
 fi
 
 # ---------------------------------------------------------------------------

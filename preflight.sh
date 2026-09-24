@@ -1290,207 +1290,89 @@ capability_dhcp() {
 
   local binary="${HERE}/preflight/preflight"
 
-  # ALWAYS BUILD. The previous version built only when the binary was absent,
-  # and that is how a run reports on code it did not execute.
+  # ---------------------------------------------------------------------
+  # THIS SECTION NO LONGER BUILDS ANYTHING. It reads the binary it is about
+  # to run and says which one it is.
   #
-  # On 20 September 2026 a credential fix was written, committed, pulled onto
-  # the appliance and run -- and the run used the binary left behind by the
-  # hour before, because the file still existed. It produced the identical
-  # refusal, which read as the fix not working when the fix had never been
-  # compiled. Nothing in the output said the probe was stale, and the one line
-  # that would have given it away was the BUILDING line not being printed:
-  # an absence, which is the hardest thing to notice.
+  # ## What it did, and why that was a finding rather than a feature
   #
-  # That is *committed is not shipped* at the smallest scale. Go's build cache
-  # makes a rebuild with no changes almost free, so the guard was saving
-  # nothing and costing the ability to trust the result.
-  # THE COMPILER IS THE ONE go.mod PINS, AND THAT IS READ RATHER THAN ASSUMED.
+  # Until 24 September 2026 this ran `go build` on every invocation. Under
+  # the timer that meant **the appliance rebuilt and replaced its own
+  # executable, unattended, on a schedule** -- the run at 05:44 that morning
+  # produced a binary stamped 09d3eec where the day before it had been
+  # adde78f. Nobody authorised a self-modifying collector, and every claim
+  # anybody had made about which commit was running on that box was void
+  # from the moment the timer fired.
   #
-  # `toolchain go1.27.1` in go.mod means any Go 1.21+ selects that compiler,
-  # fetching it if it has to. That is what makes the binary a property of the
-  # COMMIT rather than of whichever machine built it -- the same purpose as
-  # -trimpath and the commit stamp, and decision 3 needs all three.
+  # ## Removing it removes no check, and that is the argument
   #
-  # It needs network the first time. **A build that quietly fell back to a
-  # local compiler is the same defect as a stamp that did not take**: it
-  # succeeds, it looks right, and the bytes are not the ones anybody pinned.
-  # So the selected toolchain is compared with the pin and a mismatch refuses.
-  local pinned selected
-  pinned="$(sed -n 's/^toolchain \(go[0-9.]*\)$/\1/p' "${HERE}/preflight/go.mod")"
-  selected="$(cd "${HERE}/preflight" && go version 2>/dev/null | awk '{print $3}')"
-
-  if [ -z "$pinned" ]; then
-    say "REFUSED: preflight/go.mod names no toolchain."
-    say "  The build would use whatever compiler this host happens to have,"
-    say "  which makes the binary a property of the machine rather than of the"
-    say "  commit. Add a toolchain line before building."
-    REFUSED=$((REFUSED + 1))
-    return 1
-  fi
-
-  if [ "$selected" != "$pinned" ]; then
-    say "REFUSED: the TOOLCHAIN IS NOT THE PINNED ONE."
-    say "  go.mod pins ${pinned}; this build would use ${selected:-(go did not answer)}."
-    say ""
-    say "  The usual cause is no network: the pinned compiler is fetched on"
-    say "  first use, and a host that cannot reach the proxy falls back to its"
-    say "  own. That fallback is refused rather than accepted, because a build"
-    say "  that quietly used a different compiler than the one pinned is the"
-    say "  same defect as a stamp that did not take."
-    say ""
-    say "  This is moot once the signed binary ships and this box stops"
-    say "  compiling. Until then: give it network once, or build elsewhere."
-    REFUSED=$((REFUSED + 1))
-    return 1
-  fi
-
-  say "toolchain: ${selected} (pinned in go.mod)"
-  say "building the DHCP probe..."
-
-  # `go mod tidy` ONLY when there is no go.sum, and the comment that used to
-  # sit here was describing a design that had already been replaced.
+  # The build was justified by a digest pin: the appliance would decline a
+  # binary whose fingerprint disagreed with one the portal supplied. **There
+  # is no such pin.** Nothing compares these bytes with anything, here or in
+  # the portal, so the section compared the digest against NOTHING. What is
+  # lost by not building is the certainty that the binary matches the tree,
+  # and that certainty was bought by the thing that made the box
+  # unpredictable.
   #
-  # It said go.mod "deliberately pins nothing" and that the require line and
-  # checksums are written from the imports on first build. That was true, and
-  # stopped being true when the module was pinned and go.sum committed -- and
-  # the sentence survived, directly above the one command that rewrites the
-  # file it was describing. A superseded design surviving in the prose beside
-  # the thing that changed is a shape this project has already paid for once.
+  # ## What replaces it
   #
-  # Tidy is kept for the case it was written for: a tree with no go.sum, where
-  # `go build` refuses with "missing go.sum entry" for every import -- five
-  # errors naming packages that are all correct. That case needs the network
-  # once, and its failure is reported on its own, because "could not reach the
-  # module proxy" and "the code does not compile" are different facts and only
-  # the second is about this repository.
+  # The stamp is still READ, because it is the one question the binary can
+  # answer about itself with certainty and it costs nothing. What changed is
+  # that it is now a reading of what is installed rather than a read-back of
+  # something this script just wrote -- which is the honest version of the
+  # same line.
   #
-  # When go.sum IS present the build is offline and the pin is authoritative.
-  if [ ! -f "${HERE}/preflight/go.sum" ]; then
-    say "  no go.sum: resolving dependencies once, which needs the network"
-    if ! (cd "${HERE}/preflight" && go mod tidy 2>&1 | sed 's/^/  /'); then
-      say "REFUSED: could not resolve the probe's dependencies."
-      say "  This needs outbound network access to the Go module proxy, once."
-      say "  It is not a failure of the domain or of this host's credentials."
-      REFUSED=$((REFUSED + 1))
-      return 1
-    fi
-  fi
-
-  # The pin has to survive the build, and that is asserted rather than assumed.
+  # ## A missing binary is NOT ASKED, not REFUSED
   #
-  # The toolchain check above compares the selected compiler against the
-  # version in go.mod. If anything in this step rewrites go.mod, that check
-  # compared against a file the build then changed, and the pin is a sentence
-  # rather than a constraint. Cheap to check, and it fails in the direction
-  # that asks a person rather than the one that carries on.
-  local mod_before
-  mod_before="$(cat "${HERE}/preflight/go.mod")"
-
-  # The commit is stamped in, and the stamp is READ BACK below.
-  #
-  # `-X main.commit=` fails SILENTLY: a wrong symbol path, a renamed variable
-  # or a quoting slip all produce a clean build and an empty stamp. That is
-  # *absence of output read as absence of finding* in a linker flag, so the
-  # build is not trusted to have done it.
-  #
-  # **The stamp is worth having on its own**, which is worth saying because
-  # it was justified by something that does not exist: a digest pin. There
-  # is none -- nothing here or in the portal compares these bytes with
-  # anything. What the stamp buys today is that a person reading a run can
-  # say which commit produced the binary, which is the whole of it.
-  local stamp_commit
-  stamp_commit="$(git -C "${HERE}" rev-parse HEAD 2>/dev/null || echo "")"
-
-  # ## The tag too, and its absence is a different fact from the commit's
-  #
-  # `main.version` was never passed, so every binary reported `no-tag` --
-  # including one built from a tagged release. That was never WRONG, which is
-  # why it went unnoticed for so long: it was permanently uninformative. The
-  # commit says which bytes; the tag says which release, and only the second is
-  # the thing a person says out loud.
-  #
-  # `--exact-match` deliberately: a commit that is not itself tagged has no
-  # release, and `git describe` without it would answer with the nearest tag
-  # plus a distance, which reads like a release and is not one. An untagged
-  # build says `no-tag`, which is true.
-  local stamp_version
-  stamp_version="$(git -C "${HERE}" describe --tags --exact-match 2>/dev/null || echo "")"
-
-  if ! (cd "${HERE}/preflight" && go build -trimpath \
-          -ldflags "-X main.commit=${stamp_commit} -X main.version=${stamp_version}" \
-          -o preflight . 2>&1 | sed 's/^/  /'); then
-    say "REFUSED: the probe's dependencies resolved and it did not compile."
-    say ""
-    say "  THIS IS THE CODE, NOT THIS HOST. The probe compiled and ran on this"
-    say "  appliance on 20 September 2026, so the toolchain, the module cache"
-    say "  and the network are all known to work here. A compile failure now is"
-    say "  a change made since then, and the compiler names it above."
-    say ""
-    say "  Nothing about the domain, the account or the credential is implicated."
-    REFUSED=$((REFUSED + 1))
-    return 1
-  fi
-
-  if [ "$(cat "${HERE}/preflight/go.mod")" != "${mod_before}" ]; then
-    say "REFUSED: the build rewrote go.mod."
-    say ""
-    say "  The toolchain check above read a pinned version out of that file,"
-    say "  and something here has since changed it -- so what was compared is"
-    say "  not what was built against. Run:  git -C . diff preflight/go.mod"
-    say "  to see it. Do not commit the rewrite without deciding about it."
-    REFUSED=$((REFUSED + 1))
-    return 1
-  fi
-
-  # Read the artifact rather than assuming the build produced one.
+  # `refused` means the domain was asked and said no; `not asked` means it
+  # was never asked. A binary that is not installed is neither a fact about
+  # the client’s network nor a gap in what this host was told -- it is a
+  # fault in the installation, and this script already routes a fault of its
+  # own to `not-asked` with a reason that names it as one. Calling it
+  # `refused` would put an installation fault in the bin that means *the
+  # network said no*, which is the one thing the triple exists to keep apart.
+  # ---------------------------------------------------------------------
   if [ ! -x "$binary" ]; then
-    say "REFUSED: the build reported success and there is no binary at"
-    say "  ${binary}. Nothing was asked of any DHCP server."
-    REFUSED=$((REFUSED + 1))
+    say "NOT ASKED: there is no DHCP probe at ${binary}."
+    say ""
+    say "  This script no longer builds one. Nothing was asked of any DHCP"
+    say "  server, and nothing about the domain, the account or the"
+    say "  credential is implicated."
+    UNASKED=$((UNASKED + 1))
     return 1
   fi
 
-  # READ THE STAMP BACK, and refuse a build that did not take one.
+  # READ THE STAMP, and say plainly when there is not one.
   #
-  # This is the one question the binary can answer about itself with
-  # certainty.
+  # **This is a reading now rather than a read-back.** It used to prove that
+  # a linker flag written seconds earlier had taken; it now says which commit
+  # produced the bytes about to run, which is what a person reading a report
+  # needs either way.
   #
-  # **NOT YET A DIGEST PIN, and this comment used to say otherwise.** It
-  # asserted, in the present tense, that the appliance would decline a binary
-  # whose fingerprint disagreed with one the portal had supplied -- a control
-  # nobody has built. Nothing compares these bytes with anything.
-  #
-  # The withdrawn wording is described rather than written, because the
-  # assertion in `stamp-test.sh` reads this file for exactly that sentence
-  # and cannot tell an account of it from an instance. It caught this
-  # paragraph on its first run.
-  #
-  # What a pin needs is a far side: the portal naming an expected digest, and
-  # this script refusing a binary that does not match it. That is a schema
-  # change, a portal surface and a deploy, and it is not started. The stamp
-  # is the half that exists and it stands on its own.
+  # An unstamped binary is not asked for the same reason a missing one is:
+  # a probe that cannot say which commit built it cannot be matched to a
+  # review, a report or a change somebody made, and running it anyway would
+  # produce a finding nobody could trace.
   local reported
   reported="$("$binary" -version 2>&1)"
 
   case "$reported" in
     *unstamped*)
-      say "REFUSED: the build succeeded and the STAMP DID NOT TAKE."
+      say "NOT ASKED: the installed probe carries no commit stamp."
       say "  ${binary} -version says: ${reported}"
       say ""
-      say "  The linker flag produced no commit. A wrong symbol path, a renamed"
-      say "  variable or a quoting slip all build cleanly and stamp nothing, so"
-      say "  this is read back rather than assumed. A binary that cannot say"
-      say "  which commit built it cannot be matched to a review, a report or a"
-      say "  change somebody made."
-      REFUSED=$((REFUSED + 1))
+      say "  A binary that cannot say which commit built it cannot be matched"
+      say "  to a review, a report or a change somebody made. Install one that"
+      say "  was built from a named commit."
+      UNASKED=$((UNASKED + 1))
       return 1
       ;;
   esac
 
   # One line, not two. This printed `built:` twice in a row -- once with the
-  # stamp and once with the file's timestamp -- which reads as one fact stated
-  # twice with different values rather than as two facts.
-  say "  built: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date '+%Y-%m-%d %H:%M:%S') — ${reported}"
+  # stamp and once with the file’s timestamp -- which reads as one fact
+  # stated twice with different values rather than as two facts.
+  say "  probe: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '(no mtime)') — ${reported}"
 
   # Each server asked and answered on its own. A site with six DHCP servers
   # where one refuses is a different fact from a site with five servers, and

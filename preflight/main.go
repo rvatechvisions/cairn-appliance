@@ -13,7 +13,7 @@
 // saw it. They were corrected against the module's own source in the cache on
 // the appliance rather than against anybody's recollection.
 //
-//	cd preflight && go mod tidy && go build .
+//	built from this directory on a workstation, never on an appliance
 //
 // # Two calls, both reads
 //
@@ -210,7 +210,7 @@ func readRegistrationKey() (string, error) {
 // promptForRegistrationKey reads the key from the terminal with echo off.
 //
 // **stty rather than a dependency.** Turning echo off needs termios, and the
-// package for it is golang.org/x/term -- which means `go mod tidy` against a
+// package for it is golang.org/x/term -- which means tidying the module against a
 // pinned module, the command that blocked a pull on the lab box and which
 // BUILD.md now tells people not to run. stty is on every host that has a
 // terminal to prompt at, and this branch only runs when there is one.

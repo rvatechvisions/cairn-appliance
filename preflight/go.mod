@@ -4,7 +4,7 @@ go 1.26.0
 
 toolchain go1.27.1
 
-// THE VERSIONS BELOW WERE WRITTEN BY `go mod tidy`, NOT BY A PERSON, AND THAT
+// THE VERSIONS BELOW WERE WRITTEN BY THE MODULE TIDY STEP, NOT BY A PERSON, AND THAT
 // IS THE WHOLE POINT OF THEM.
 //
 // A version written from memory is a fabricated identifier in the one place

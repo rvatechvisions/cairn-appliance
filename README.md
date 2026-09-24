@@ -476,17 +476,19 @@ sub-package, the client constructor, the request and response types, and the
 fields the results are read out of.
 
 The design is two documented MS-DHCPM reads over Kerberos and that part is
-sound. The **identifiers** are the part to distrust, and the compiler settles
-them in one command:
+sound. The **identifiers** are the part to distrust, and a compiler settles
+them — **somewhere other than an appliance.**
 
-```
-cd preflight && go mod tidy && go build .
-```
+**This used to print the build command here, and that is withdrawn.** As of
+24 September 2026 the appliance neither compiles nor obtains a compiler:
+the first timed run rebuilt and replaced the collector’s own executable
+because a compiler had been installed on the box, and a document telling an
+installer to build is **the same defect with a person as the interpreter**.
 
-Expect names to need correcting on that first build. Correct them against the
-module's own source, and delete the notice at the top of `main.go` in the same
-commit — a warning that outlives the thing it warns about is read as noise the
-next time one is genuinely needed.
+Build on a workstation, from this repository, and install the binary. The
+names are corrected against the module’s own source, and the notice at the
+top of `main.go` is deleted in the same commit — a warning that outlives the
+thing it warns about is read as noise the next time one is genuinely needed.
 
 ---
 

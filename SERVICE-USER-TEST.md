@@ -54,7 +54,7 @@ interesting result.**
 | --- | --- | --- |
 | 1 | Reading `/etc/cairn-appliance/appliance.key` | Mode 600, owned by root. The service user cannot read it, and **preflight also refuses to continue unless the key is `600 root:root`** — so this may fail twice, once on the permission and once on the check |
 | 2 | The `/dev/shm` ccache directory | `mktemp -d` there should work for any user, and `chmod 700` makes it private to whoever created it. **This one is expected to PASS**, and if it refuses the design needs a different place for the cache |
-| 3 | `go mod tidy` and `go build` | Both **write** — into the module cache and into `preflight/preflight`. The repository is root-owned, so the build should refuse. **This is the one that matters most**, and it is the one the signed-binary design removes |
+| 3 | ~~The build step~~ **WITHDRAWN 24 September 2026** | It wrote into the module cache and into the probe, and the repository being root-owned was the thing expected to refuse it. **There is no build step any more**: the appliance neither compiles nor obtains a compiler, so the row it was testing is gone rather than passing |
 | 4 | Any write under the repository | Same cause as 3 |
 | 5 | **Anything else** | The point of running it |
 

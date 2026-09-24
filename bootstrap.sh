@@ -68,16 +68,34 @@ install_packages() {
   # an unattended run waits for somebody who is not there.
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq || return 1
+  # **No compiler.** `golang-go` was installed here until 24 September 2026,
+  # and it is the ACQUISITION half of a rule that had only ever written down
+  # the invocation half.
+  #
+  # The appliance never compiles and never obtains a compiler. Installing one
+  # is what made the timer able to rebuild the collector: a distribution `go`
+  # at 1.24 met `toolchain go1.27.1` in go.mod and obtained 1.27.1 to satisfy
+  # it -- from a cache, or over the network, from a box whose whole premise is
+  # outbound HTTPS to the portal and nothing else.
+  #
+  # **Two installations is what made it invisible.** A login shell found
+  # 1.27.1 under /usr/local/go/bin and systemd found 1.24 under /usr/bin, so
+  # `go version` by hand answered about a different program from the one the
+  # timer ran. *There is more than one of it, and which one you get depends on
+  # who is asking.*
   apt-get install -y -qq --no-install-recommends \
     krb5-user ldap-utils libsasl2-modules-gssapi-mit \
-    dnsutils ca-certificates curl jq golang-go || return 1
+    dnsutils ca-certificates curl jq || return 1
 }
 
 report_versions() {
   # Printed rather than asserted. A version this script has not met is not a
   # failure, and pinning one here would make the script wrong on the next
   # release of a distribution nobody has tested it on.
-  for tool in kinit klist ldapsearch go jq; do
+  # `go` is deliberately not on this list. A version report for a compiler
+  # this appliance must not have would read as a prerequisite somebody should
+  # go and satisfy.
+  for tool in kinit klist ldapsearch jq; do
     if command -v "$tool" >/dev/null 2>&1; then
       printf '  %-12s %s\n' "$tool" "$(command -v "$tool")"
     else
@@ -85,7 +103,14 @@ report_versions() {
     fi
   done
 
-  command -v go >/dev/null 2>&1 && go version | sed 's/^/  /'
+  # **And a compiler that IS present is reported as a finding**, because it
+  # is one: this appliance does not compile, so a compiler on it is either a
+  # leftover from before 24 September 2026 or something else put it there.
+  if command -v go >/dev/null 2>&1; then
+    printf '  %-12s %s  <- UNEXPECTED: this appliance does not compile\n' \
+      "go" "$(command -v go)"
+  fi
+
   return 0
 }
 

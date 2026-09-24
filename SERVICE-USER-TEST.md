@@ -3,7 +3,20 @@
 **Written 20 September 2026. Jackie runs these on the lab box; nothing here
 changes the box.**
 
-**The premise is still reasoning.** The design — code in `/opt/cairn`,
+> **PATHS CORRECTED 24 September 2026.** This document named `/opt/cairn`
+> once and `/root/cairn-appliance` twice, which were right when it was
+> written and stopped being right when Jackie moved the repository to
+> `/opt/cairn-appliance` on 23 September on his own ruling — *a path in a
+> unit file is a claim about a machine, and nothing checks it against the
+> machine.*
+>
+> **They were found by the path census on the 23rd and deliberately not
+> changed then**, because the block that listed them also said the
+> appliance repository stays untouched, and *an absolute constraint
+> acquires its first exception from the change that is obviously safe.*
+> The repository is unfrozen now, so they are corrected.
+
+**The premise is still reasoning.** The design — code in `/opt/cairn-appliance`,
 root-owned and read-only to the service user; key readable by that user only; a
 separate root-owned updater; the service user runs — rests on *nothing in a
 collection run needs root*. **That has not been measured**, and this project's
@@ -26,10 +39,10 @@ sudo useradd --system --no-create-home --shell /usr/sbin/nologin cairn-test
 # Let it READ the repository where it currently sits. Nothing is moved, and
 # this is the smallest change that lets the test run at all.
 sudo chmod o+rx /root                      # traversal only
-sudo chmod -R o+rX /root/cairn-appliance
+sudo chmod -R o+rX /opt/cairn-appliance
 
 # The run. Everything it cannot do will refuse.
-cd /root/cairn-appliance
+cd /opt/cairn-appliance
 sudo -u cairn-test ./preflight.sh 2>&1 | tee /tmp/preflight-as-cairn-test.txt
 echo "exit: $?"
 ```

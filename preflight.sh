@@ -240,11 +240,54 @@ say "No credential is written down by this script, and none is printed."
 rule "nothing durable on this box"
 DURABLE=0
 
-for found in "$CONFIG_DIR"/*.keytab "$CONFIG_DIR"/*.kt /etc/krb5.keytab; do
-  [ -e "$found" ] || continue
-  say "FOUND A KEYTAB: ${found}"
-  DURABLE=1
-done
+# The scan is a FUNCTION so that something can drive it.
+#
+# **This was a block, and it was the only enforcement of a promise about a
+# client's domain controller with no test behind it.** It could not have had
+# one: CONFIG_DIR is a literal, so nothing could point the scan anywhere but
+# this machine's own /etc.
+#
+# The three places it looks are parameters now and the caller passes the real
+# ones. It prints what it found and returns non-zero when it found anything,
+# so the refusal below still belongs to the caller — a scan that exits on
+# somebody's behalf is a scan nothing can test either.
+#
+# Echoes one line per find. Returns 0 when the box is clean, 1 when it is not.
+durable_credentials() {
+  local config_dir="$1"
+  local system_keytab="$2"
+  local password_homes="$3"
+  local unit_dir="$4"
+  local dirty=0
+
+  local found
+  for found in "$config_dir"/*.keytab "$config_dir"/*.kt "$system_keytab"; do
+    [ -e "$found" ] || continue
+    printf 'FOUND A KEYTAB: %s\n' "$found"
+    dirty=1
+  done
+
+  local home
+  for home in $password_homes; do
+    [ -f "$home" ] || continue
+    if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)=..*' "$home" 2>/dev/null; then
+      printf 'FOUND A PASSWORD in %s\n' "$home"
+      dirty=1
+    fi
+  done
+
+  if [ -d "$unit_dir" ]; then
+    local unit
+    for unit in $(grep -rlE 'cairn|preflight' "$unit_dir" 2>/dev/null); do
+      if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)|EnvironmentFile' "$unit" 2>/dev/null; then
+        printf 'A SYSTEMD UNIT MAY CARRY A CREDENTIAL: %s\n' "$unit"
+        dirty=1
+      fi
+    done
+  fi
+
+  return "$dirty"
+}
 
 # The places a password actually gets parked, not just the settings file.
 #
@@ -270,23 +313,12 @@ ${CONFIG_DIR}/environment
 /var/spool/cron/crontabs/root
 "
 
-for home in $PASSWORD_HOMES; do
-  [ -f "$home" ] || continue
-  if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)=..*' "$home" 2>/dev/null; then
-    say "FOUND A PASSWORD in ${home}"
-    DURABLE=1
-  fi
-done
+# The caller passes the real paths, and owns the refusal.
+DURABLE_REPORT="$(durable_credentials "$CONFIG_DIR" /etc/krb5.keytab "$PASSWORD_HOMES" /etc/systemd/system)"
+DURABLE=$?
 
-# systemd units are the other obvious home, and they are found rather than
-# listed: an EnvironmentFile= line pointing anywhere at all is worth seeing.
-if [ -d /etc/systemd/system ]; then
-  for unit in $(grep -rlE 'cairn|preflight' /etc/systemd/system 2>/dev/null); do
-    if grep -qiE '(CAIRN_PASSWORD|CAIRN_PASS|CAIRN_SECRET)|EnvironmentFile' "$unit" 2>/dev/null; then
-      say "A SYSTEMD UNIT MAY CARRY A CREDENTIAL: ${unit}"
-      DURABLE=1
-    fi
-  done
+if [ -n "$DURABLE_REPORT" ]; then
+  say "$DURABLE_REPORT"
 fi
 
 if [ "$DURABLE" -ne 0 ]; then

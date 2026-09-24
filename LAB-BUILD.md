@@ -191,8 +191,21 @@ force it. Every file this repository tracks is either shell, Go or markdown,
 so anything else the box is holding is something it made, and the refusal is
 telling you which.
 
-**Then re-run the three commands in section 4.** The build is offline now:
-`go mod tidy` runs only when there is no `go.sum`, and there is one.
+**Then re-run the three commands in section 4.**
+
+**CORRECTED 24 September 2026. This said *the build is offline now*, and
+that is true of MODULES and false of the TOOLCHAIN.** `go.sum` governs
+module checksums, so with one present nothing is fetched to resolve
+imports. It says nothing about the compiler: a `toolchain` directive the
+local `go` cannot satisfy is obtained from Go’s toolchain service
+**regardless of `go.sum`**, and that is what happened on the lab box at
+05:44 on 24 September — systemd found a distribution `go1.24` and
+`toolchain go1.27.1` made it acquire 1.27.1.
+
+**So a build here is offline only if the compiler it needs is already
+present.** On a machine that has go1.27.1 first on PATH that is true; on
+one that does not, the build reaches the network for a compiler before it
+reaches anything for a module.
 
 **Why it is public, stated rather than left as a default.** Jackie's decision,
 20 September 2026. Every way of cloning a *private* repository ends with a

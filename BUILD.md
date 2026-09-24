@@ -163,6 +163,18 @@ never to decide which ones. That is the reverse of what this paragraph said
 before `5fad13c`: it read *`go.mod` deliberately pins nothing*, which was
 true of the design it described and false of the repository it sat in.
 
+**AND IT IS ABOUT MODULES ONLY. CORRECTED 24 September 2026.** The sentence
+above says nothing about the **compiler**, and the compiler is the thing
+this build fetches. Since Go 1.21 a `go` or `toolchain` line the installed
+compiler cannot satisfy makes the build **download one**, and `go.sum` has
+no bearing on it.
+
+**Measured on the lab box, not argued.** Three toolchains sit in root’s
+module cache: `go1.26.8` and `go1.26.0` fetched on 20 September 2026, and
+`go1.27.1` at **05:44:30 on 24 September, three seconds into an unattended
+run.** Every one of them arrived over the wire because a directive here
+named a version the machine did not have.
+
 The failure it warned about is still real and now has a different cause:
 `go build` refusing with *missing go.sum entry* for five correctly-imported
 packages means `go.sum` is missing or was moved aside, not that a step was

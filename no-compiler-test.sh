@@ -56,6 +56,23 @@ fi
 # The three build documents record how the binary that exists was produced.
 # They are history and they read as instructions, which is the finding in
 # `APPLIANCE-REBUILD-REMOVAL.md` rather than something this test can fix.
+#
+# **`preflight/go.mod` is exempt from the FETCH refusal and from nothing else,
+# and the exemption expires by itself.**
+#
+# Its `go 1.26.0` and `toolchain go1.27.1` lines are what fetched three
+# compilers onto the lab box -- go1.26.8 and go1.26.0 on 20 September, and
+# go1.27.1 at 05:44:30 on the 24th, three seconds into an unattended run. The
+# lines are correct for the machine that BUILDS the probe and wrong for a
+# machine that merely runs it.
+#
+# **The remedy is that this file leaves.** Jackie ruled on 24 September 2026
+# that the appliance holds no repository and receives a verified binary, so
+# `preflight/` belongs to a build machine rather than here. **The exemption is
+# dated by the tree rather than by a calendar**: the loop below asserts every
+# exempted file still exists, so the day `preflight/go.mod` leaves, this
+# exemption fails and somebody has to delete it. An exemption that outlives its
+# subject is a place to park the next failure.
 exempt=(
   "enrol-secret-test.sh"
   "stamp-test.sh"
@@ -65,13 +82,24 @@ exempt=(
   "ANSWER-SHEET.md"
 )
 
+# Exempt from the FETCH refusal only. Everything else still applies to it.
+fetch_exempt=(
+  "preflight/go.mod"
+)
+
+is_fetch_exempt() {
+  local file="$1" e
+  for e in "${fetch_exempt[@]}"; do [ "$file" = "$e" ] && return 0; done
+  return 1
+}
+
 is_exempt() {
   local file="$1" e
   for e in "${exempt[@]}"; do [ "$file" = "$e" ] && return 0; done
   return 1
 }
 
-for e in "${exempt[@]}"; do
+for e in "${exempt[@]}" "${fetch_exempt[@]}"; do
   if [ -f "$e" ]; then
     ok "the exemption ${e} still names a file that is here"
   else
@@ -129,7 +157,49 @@ done
 [ "$acquired" -eq 0 ] && ok "no tracked file installs or downloads a compiler, outside the named exemptions"
 
 # ---------------------------------------------------------------------------
-# 3. The scan reached something
+# 3. Nothing FETCHES EXECUTABLE CODE from anywhere except the portal
+# ---------------------------------------------------------------------------
+#
+# **The fourth refusal, and it is not implied by the other three.** Jackie’s
+# ruling, 24 September 2026, after a directory listing showed three Go
+# toolchains on the lab box -- go1.26.8 and go1.26.0 fetched on 20 September,
+# and go1.27.1 at **05:44:30 on the 24th, three seconds into an unattended
+# run.**
+#
+# **A toolchain acquisition is none of the first three.** It is not a compile,
+# it is not a compiler we invoked, and it is not a binary we ran -- so a check
+# that refuses `go build` and `apt-get install golang` walks straight past it.
+# **IT WAS A FOURTH THING NOBODY HAD NAMED.**
+#
+# ## What a `go` or `toolchain` directive actually is
+#
+# Since Go 1.21 a `go` line higher than the installed compiler, or any
+# `toolchain` line the installed compiler cannot satisfy, makes the build
+# **download a compiler**. So two ordinary-looking lines in a `go.mod` are an
+# instruction to fetch executable code, and neither of them contains a verb.
+#
+# `GOTOOLCHAIN=local` turns that into a refusal, and nobody had set it because
+# nobody had noticed there were two compilers on the box.
+#
+# **This refuses the DIRECTIVE rather than the download**, because the download
+# happens on a machine and the directive is the thing in the repository. A
+# scan cannot see a fetch; it can see the line that causes one.
+fetched=0
+for file in "${tracked[@]}"; do
+  is_exempt "$file" && continue
+  is_fetch_exempt "$file" && continue
+  [ -f "$file" ] || continue
+
+  while IFS= read -r hit; do
+    bad "${file}: can make a build fetch a compiler -- ${hit}"
+    fetched=$((fetched + 1))
+  done < <(grep -nE '^[[:space:]]*(toolchain[[:space:]]+go[0-9]|go[[:space:]]+1\.[0-9]+)' "$file" 2>/dev/null || true)
+done
+
+[ "$fetched" -eq 0 ] && ok "no tracked file carries a directive that would fetch a compiler"
+
+# ---------------------------------------------------------------------------
+# 4. The scan reached something
 # ---------------------------------------------------------------------------
 #
 # *A scan that matches nothing passes everything.* The floor is over the files

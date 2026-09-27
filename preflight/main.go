@@ -489,6 +489,11 @@ func main() {
 			if credential.Controller != "" {
 				fmt.Printf("controller=%s\n", credential.Controller)
 			}
+			// Omitted when the portal sent no list, and present -- possibly empty
+			// -- when it did. The shell reads absence as "collect nothing".
+			if credential.Capabilities != nil {
+				fmt.Printf("capabilities=%s\n", strings.Join(*credential.Capabilities, ","))
+			}
 			fmt.Print("\n")
 			fmt.Print(credential.Password)
 			return

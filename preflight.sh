@@ -132,11 +132,15 @@ agrees() {
 # secret to exactly that.
 PC_USERNAME=""
 PC_REALM=""
+PC_CAPABILITIES=""
+PC_CAPABILITIES_SET=0
 PC_CONTROLLER=""
 PC_PASSWORD=""
 parse_credential_block() {
   PC_USERNAME=""
   PC_REALM=""
+  PC_CAPABILITIES=""
+  PC_CAPABILITIES_SET=0
   PC_CONTROLLER=""
   PC_PASSWORD=""
 
@@ -152,6 +156,10 @@ parse_credential_block() {
         username=*)   PC_USERNAME="${line#username=}" ;;
         realm=*)      PC_REALM="${line#realm=}" ;;
         controller=*) PC_CONTROLLER="${line#controller=}" ;;
+        capabilities=*)
+          PC_CAPABILITIES="${line#capabilities=}"
+          PC_CAPABILITIES_SET=1
+          ;;
       esac
     elif [ "$pw_started" -eq 0 ]; then
       # **A flag rather than a test for emptiness.** A password whose first
@@ -540,6 +548,30 @@ capability_credential_source() {
 capability_credential_source || true
 
 # ---------------------------------------------------------------------------
+# What this collector may read, from the portal. WO-0927-M CURRENT, C1 and C2.
+#
+# The list arrives on the credential fetch, as data. **An answer with no list
+# collects nothing**: a consent mechanism that fails open is not a consent
+# mechanism. That covers a credential typed at a terminal or set in the
+# environment too -- neither carries a list, so neither can authorize a read.
+# The run is then reported as could-not-start, naming why.
+# ---------------------------------------------------------------------------
+. "${HERE}/consent.sh"
+CONSENTED="$PC_CAPABILITIES"
+CONSENT_KNOWN="$PC_CAPABILITIES_SET"
+say ""
+if [ "$CONSENT_KNOWN" -eq 1 ]; then
+  say "consent   ${CONSENTED:-nothing granted}"
+else
+  say "NO CONSENT LIST: the portal did not say what this collector may read,"
+  say "  so nothing will be read. Update the portal before the appliance."
+  if [ "$CRED_FAILED" -eq 0 ]; then
+    CRED_FAILED=1
+    CRED_REASON="the portal sent no list of what this collector may read, so nothing was read"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Recording what each capability did, so the run can be reported.
 #
 # **Derived from the counters that already exist, not from a second tally.**
@@ -596,8 +628,32 @@ first_reason() {
   printf '%s' "${line#*: }"
 }
 
+# The step a consent refuses, run in place of the one that was not permitted so
+# that its state and reason are recorded exactly as any other step's are.
+step_not_consented() {
+  local needs
+  needs="$(step_capability "$STEP_NAME")"
+  if [ "$CONSENT_KNOWN" -ne 1 ]; then
+    say "NOT ASKED: the portal sent no consent list, so this collector reads nothing."
+  elif [ "$needs" = UNMAPPED ]; then
+    say "NOT ASKED: step ${STEP_NAME} maps to no consent capability, so it never runs."
+  elif [ "$needs" = PREREQUISITE ]; then
+    say "NOT ASKED: nothing is consented, so there is nothing to sign in for."
+  else
+    say "NOT ASKED: consent for ${needs} is not recorded for this organization."
+  fi
+  UNASKED=$((UNASKED + 1))
+  return 1
+}
+
 run_capability() {
   local name="$1" fn="$2"
+
+  # Consent first: a step it does not permit is replaced, never run.
+  STEP_NAME="$name"
+  if [ "$CONSENT_KNOWN" -ne 1 ] || ! step_permitted "$name" "$CONSENTED"; then
+    fn=step_not_consented
+  fi
   local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED
   local log state reason status
 

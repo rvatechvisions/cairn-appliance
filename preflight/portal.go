@@ -231,6 +231,11 @@ type directoryCredential struct {
 	Password   string `json:"password"`
 	Realm      string `json:"realm"`
 	Controller string `json:"controller"`
+	// What this collector may read. A pointer, so an answer that carries no
+	// list is distinguishable from one that carries an empty list: the first
+	// is an older or broken portal and the shell collects nothing; the second
+	// is a client who has granted nothing.
+	Capabilities *[]string `json:"capabilities"`
 }
 
 func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (directoryCredential, error) {

@@ -194,6 +194,23 @@ fi
 
 # ---------------------------------------------------------------------------
 
+# The consent list. Absent and empty are different answers: absent means the
+# portal said nothing and the run collects nothing; empty means nothing is
+# granted. A flag, not a test for emptiness, is what tells them apart.
+printf 'username=u\n\npw\n' > "${TMPDIR:-/tmp}/cred-none.txt"
+parse_credential_block < "${TMPDIR:-/tmp}/cred-none.txt"
+[ "$PC_CAPABILITIES_SET" -eq 0 ] && ok "no capabilities line reads as absent" || bad "an answer with no list was read as carrying one"
+
+printf 'username=u\ncapabilities=\n\npw\n' > "${TMPDIR:-/tmp}/cred-empty.txt"
+parse_credential_block < "${TMPDIR:-/tmp}/cred-empty.txt"
+[ "$PC_CAPABILITIES_SET" -eq 1 ] && [ -z "$PC_CAPABILITIES" ] && ok "an empty list reads as present and empty" || bad "an empty list was not read as present and empty"
+
+printf 'username=u\ncapabilities=ad,dhcp\n\ncapabilities=snmp\n' > "${TMPDIR:-/tmp}/cred-list.txt"
+parse_credential_block < "${TMPDIR:-/tmp}/cred-list.txt"
+[ "$PC_CAPABILITIES" = "ad,dhcp" ] && ok "the list is read from the header" || bad "the list read was ${PC_CAPABILITIES}"
+[ "$PC_PASSWORD" = "capabilities=snmp" ] && ok "a password that looks like a header is still the password" || bad "a header-shaped password was read as a header"
+rm -f "${TMPDIR:-/tmp}/cred-none.txt" "${TMPDIR:-/tmp}/cred-empty.txt" "${TMPDIR:-/tmp}/cred-list.txt"
+
 printf '\n%s\n' "checks: ${checks}, failures: ${fails}"
 
 if [ "$checks" -eq 0 ]; then

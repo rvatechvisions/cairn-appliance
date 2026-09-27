@@ -998,8 +998,13 @@ capability_kerberos() {
   REFUSED=$((REFUSED + 1))
   return 1
 }
-run_capability kerberos capability_kerberos || true
-KERBEROS_OK=$?
+# **The status is captured in the branch that runs on failure.** This read
+# `run_capability kerberos ... || true` and then `KERBEROS_OK=$?`, which is
+# the status of `true` -- always 0 -- so the DHCP step never saw a failed
+# sign-in and would report whatever it got as though authentication had
+# worked. kerberos-gate-test.sh drives these lines as written.
+KERBEROS_OK=0
+run_capability kerberos capability_kerberos || KERBEROS_OK=$?
 
 # ---------------------------------------------------------------------------
 # 2. Active Directory over LDAP

@@ -1,10 +1,10 @@
 # Which consent capability each preflight step needs. Sourced by preflight.sh
 # and by consent-map-test.sh; never run on its own.
 #
-# **PROPOSED AND UNCONFIRMED.** WO-0927-M CURRENT, C3: the mapping was
-# determined from what each step calls, not from its name, and a person
-# confirms it before any appliance runs it. Until then this branch is not
-# merged.
+# **CONFIRMED** in the rulings on the v4.85 checkpoint (WO-0927-M, R4), as read
+# here: determined from what each step calls, not from its name. A step added
+# later with no mapping fails consent-map-test.sh and is refused at run time;
+# it never defaults to permitted.
 #
 # Consent is granted per capability and enforced per step. A step that maps to
 # nothing is REFUSED, never run: an unmapped step would be a way to keep

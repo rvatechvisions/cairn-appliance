@@ -1614,6 +1614,48 @@ capability_zabbix() {
 run_capability zabbix capability_zabbix || true
 
 # ---------------------------------------------------------------------------
+# The relay: read requests the portal queues for connections an administrator
+# pointed at this appliance. WO-0928-G item 5, WO-0929-A item 3.
+#
+# The binary fetches the list of connections and their declared origins
+# itself, checks every request against it, never follows a redirect, and
+# refuses an answer over its limit. Exit 3 is NOT ASKED -- no connection
+# names this appliance, or the credential could not be fetched.
+capability_relay() {
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT ASKED: there is no preflight binary at ${binary}."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is nothing to carry reads for."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local status=0
+  "$binary" -portal "${CAIRN_PORTAL}" -relay || status=$?
+  case "$status" in
+    0)
+      FOUND=$((FOUND + 1))
+      return 0
+      ;;
+    3)
+      say "NOT ASKED: no connection reads through this appliance; the reason is above."
+      UNASKED=$((UNASKED + 1))
+      return 1
+      ;;
+    *)
+      say "REFUSED: the relay stopped before the portal had no more work; the reason is above."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+}
+run_capability relay capability_relay || true
+
+# ---------------------------------------------------------------------------
 rule "what this appliance can reach"
 # **This tally counts SIX and the portal counts five, and both are right.**
 #

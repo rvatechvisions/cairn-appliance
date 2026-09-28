@@ -25,6 +25,11 @@
 #   zabbix            the preflight binary: one JSON-RPC host.get         zabbix
 #                     against the Zabbix server the portal names;
 #                     reads no directory data and needs no ticket
+#   relay             the preflight binary: the checked read requests     (connection)
+#                     the portal queues for connections an administrator
+#                     pointed at THIS appliance; consent is each of those
+#                     connections, not a collector capability (WO-0929-A
+#                     item 3), and with none the binary asks nothing
 #
 # kerberos is the one step that spans capabilities: every other step
 # authenticates through the ticket it obtains. It reads nothing itself, so it
@@ -38,6 +43,7 @@ step_capability() {
     ldap|dns-zones|dhcp-authorized) printf 'ad\n' ;;
     dhcp) printf 'dhcp\n' ;;
     zabbix) printf 'zabbix\n' ;;
+    relay) printf 'CONNECTION\n' ;;
     *) printf 'UNMAPPED\n' ;;
   esac
 }
@@ -51,6 +57,9 @@ step_permitted() {
   case "$needs" in
     UNMAPPED) return 1 ;;
     PREREQUISITE) [ -n "$granted" ] ;;
+    # Consented per connection: the portal names only the connections that chose
+    # this appliance, so the step runs and the binary finds out from the portal.
+    CONNECTION) return 0 ;;
     *)
       case ",${granted}," in
         *",${needs},"*) return 0 ;;

@@ -233,25 +233,40 @@ func optionalCount(raw json.RawMessage) (*int64, error) {
 }
 
 // readVsphere signs in, reads, and signs out -- the sign-out whatever the read did.
-func readVsphere(client *http.Client, credential vsphereCredential) ([]VsphereItem, error) {
+//
+// WO-0929-B item 5: read-only forbids anything that outlives the read, and a
+// session that ends is not an artifact -- one left open is. So a sign-out that
+// fails is reported, never swallowed: with the list, as a counted finding the
+// portal files; without it, in the error the run reports. A vCenter
+// administrator who finds a session we left should have heard it from us first.
+func readVsphere(client *http.Client, credential vsphereCredential) ([]VsphereItem, bool, error) {
 	base, err := vcenterBase(credential.URL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	session, err := openSession(client, base, credential)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	items, readErr := listVMs(client, base, session)
-	if closeErr := closeSession(client, base, session); closeErr != nil {
-		fmt.Fprintln(os.Stderr, "preflight:", closeErr)
+	closeErr := closeSession(client, base, session)
+	leftOpen := closeErr != nil
+	if leftOpen {
+		fmt.Fprintln(os.Stderr, "preflight:", closeErr, "-- the session may stay open on vCenter until it times out")
 	}
-	return items, readErr
+	if readErr != nil && leftOpen {
+		return nil, true, fmt.Errorf("%w; and signing out failed too, so the session may stay open on vCenter until it times out", readErr)
+	}
+	return items, leftOpen, readErr
 }
 
 // buildVsphereSubmission is the whole of what leaves, in one place a test can
 // read byte for byte. One part of one: the list does not page.
-func buildVsphereSubmission(items []VsphereItem, collectedAt time.Time, host, account, submissionID string) ([]byte, error) {
+func buildVsphereSubmission(items []VsphereItem, sessionLeftOpen bool, collectedAt time.Time, host, account, submissionID string) ([]byte, error) {
+	leftOpen := 0
+	if sessionLeftOpen {
+		leftOpen = 1
+	}
 	withoutID := 0
 	for _, item := range items {
 		if item.VM == nil {
@@ -279,6 +294,8 @@ func buildVsphereSubmission(items []VsphereItem, collectedAt time.Time, host, ac
 			checkOf("vsphere-vms-without-id", withoutID),
 			// Every one: the summary carries no serial and no hardware address.
 			checkOf("vsphere-vms-not-correlatable", len(items)-withoutID),
+			// The session this run could not close, reported rather than swallowed.
+			checkOf("vsphere-session-left-open", leftOpen),
 		},
 		"items": items,
 	})
@@ -298,7 +315,7 @@ func collectVsphere(client *http.Client, portal, fingerprint string, private ed2
 	}
 
 	collectedAt := time.Now()
-	items, err := readVsphere(client, *credential.Vsphere)
+	items, leftOpen, err := readVsphere(client, *credential.Vsphere)
 	credential.Vsphere = nil
 	if err != nil {
 		return err
@@ -315,7 +332,7 @@ func collectVsphere(client *http.Client, portal, fingerprint string, private ed2
 		return fmt.Errorf("minting a submission id: %w", err)
 	}
 	hostName, _ := os.Hostname()
-	body, err := buildVsphereSubmission(items, collectedAt, hostName, os.Getenv("CAIRN_PRINCIPAL"), hex.EncodeToString(id))
+	body, err := buildVsphereSubmission(items, leftOpen, collectedAt, hostName, os.Getenv("CAIRN_PRINCIPAL"), hex.EncodeToString(id))
 	if err != nil {
 		return err
 	}

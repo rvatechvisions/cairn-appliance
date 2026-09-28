@@ -15,10 +15,11 @@ import (
 // The vSphere reader against a stood-up vCenter. WO-0929-A item 9.
 
 type fakeVcenter struct {
-	server   *httptest.Server
-	mu       sync.Mutex
-	requests []string
-	list     func(w http.ResponseWriter)
+	server       *httptest.Server
+	mu           sync.Mutex
+	requests     []string
+	list         func(w http.ResponseWriter)
+	refuseLogout bool
 }
 
 func (f *fakeVcenter) seen() []string {
@@ -50,6 +51,10 @@ func newFakeVcenter(t *testing.T, list func(w http.ResponseWriter)) *fakeVcenter
 			}
 			f.list(w)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/session":
+			if f.refuseLogout {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -71,9 +76,12 @@ func TestReadsTheVMListAndKeepsAnAbsentOptionalFieldAbsent(t *testing.T) {
 			{"vm":"","name":"orphan","power_state":"POWERED_OFF","cpu_count":0,"memory_size_MiB":null}
 		]`))
 	})
-	items, err := readVsphere(f.server.Client(), credentialFor(f))
+	items, leftOpen, err := readVsphere(f.server.Client(), credentialFor(f))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if leftOpen {
+		t.Error("a sign-out vCenter accepted was reported as left open")
 	}
 	if len(items) != 3 {
 		t.Fatalf("expected three virtual machines, got %d", len(items))
@@ -101,7 +109,7 @@ func TestRefusesVcentersOwnCeilingByNameAndStillSignsOut(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error_type":"UNABLE_TO_ALLOCATE_RESOURCE","messages":[{"default_message":"Too many virtual machines. Add more filter criteria to reduce the number."}]}`))
 	})
-	items, err := readVsphere(f.server.Client(), credentialFor(f))
+	items, _, err := readVsphere(f.server.Client(), credentialFor(f))
 	if !errors.Is(err, errVsphereTooMany) {
 		t.Fatalf("expected the ceiling refused by name, got %v", err)
 	}
@@ -122,7 +130,7 @@ func TestSendsNoPasswordToAPlainAddress(t *testing.T) {
 	f := newFakeVcenter(t, func(w http.ResponseWriter) { _, _ = w.Write([]byte(`[]`)) })
 	plain := credentialFor(f)
 	plain.URL = strings.Replace(plain.URL, "https://", "http://", 1)
-	if _, err := readVsphere(f.server.Client(), plain); err == nil || !strings.Contains(err.Error(), "not https") {
+	if _, _, err := readVsphere(f.server.Client(), plain); err == nil || !strings.Contains(err.Error(), "not https") {
 		t.Fatalf("expected a plain address refused, got %v", err)
 	}
 	if len(f.seen()) != 0 {
@@ -134,7 +142,7 @@ func TestAWrongPasswordIsARefusalNotAnEmptyList(t *testing.T) {
 	f := newFakeVcenter(t, func(w http.ResponseWriter) { _, _ = w.Write([]byte(`[]`)) })
 	wrong := credentialFor(f)
 	wrong.Password = "not-it"
-	if _, err := readVsphere(f.server.Client(), wrong); err == nil || !strings.Contains(err.Error(), "refused the account") {
+	if _, _, err := readVsphere(f.server.Client(), wrong); err == nil || !strings.Contains(err.Error(), "refused the account") {
 		t.Fatalf("expected the account refused, got %v", err)
 	}
 	if strings.Join(f.seen(), " ") != "POST /api/session" {
@@ -148,7 +156,7 @@ func TestTheSubmissionCarriesFiveFieldsAndCountsWhatCannotBeCorrelated(t *testin
 		{VM: &id, Name: &name, PowerState: &state},
 		{Name: &name, PowerState: &state},
 	}
-	body, err := buildVsphereSubmission(items, time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), "cairn", "svc", "s-1")
+	body, err := buildVsphereSubmission(items, false, time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC), "cairn", "svc", "s-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +191,38 @@ func TestTheSubmissionCarriesFiveFieldsAndCountsWhatCannotBeCorrelated(t *testin
 	for _, finding := range parsed.Findings {
 		counts[finding.ID] = finding.Count
 	}
-	if counts["vsphere-vms-listed"] != 2 || counts["vsphere-vms-without-id"] != 1 || counts["vsphere-vms-not-correlatable"] != 1 {
+	if counts["vsphere-vms-listed"] != 2 || counts["vsphere-vms-without-id"] != 1 || counts["vsphere-vms-not-correlatable"] != 1 || counts["vsphere-session-left-open"] != 0 {
 		t.Errorf("findings were %v", counts)
+	}
+}
+
+// WO-0929-B item 5: a session left open is reported, never swallowed.
+func TestASignOutVcenterRefusedIsReportedWithTheList(t *testing.T) {
+	f := newFakeVcenter(t, func(w http.ResponseWriter) {
+		_, _ = w.Write([]byte(`[{"vm":"vm-101","name":"dc01","power_state":"POWERED_ON"}]`))
+	})
+	f.refuseLogout = true
+	items, leftOpen, err := readVsphere(f.server.Client(), credentialFor(f))
+	if err != nil || len(items) != 1 {
+		t.Fatalf("the read itself succeeded and should come back: %v, %d", err, len(items))
+	}
+	if !leftOpen {
+		t.Fatal("a refused sign-out was not reported")
+	}
+	body, err := buildVsphereSubmission(items, leftOpen, time.Now(), "cairn", "svc", "s-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `{"id":"vsphere-session-left-open","state":"found","count":1}`) {
+		t.Errorf("the submission does not report the open session: %s", body)
+	}
+}
+
+func TestAFailedReadAndAFailedSignOutAreBothInTheError(t *testing.T) {
+	f := newFakeVcenter(t, func(w http.ResponseWriter) { w.WriteHeader(http.StatusInternalServerError) })
+	f.refuseLogout = true
+	_, leftOpen, err := readVsphere(f.server.Client(), credentialFor(f))
+	if err == nil || !leftOpen || !strings.Contains(err.Error(), "signing out failed too") {
+		t.Fatalf("expected both failures named, got leftOpen=%v err=%v", leftOpen, err)
 	}
 }

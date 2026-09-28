@@ -26,13 +26,21 @@ package main
 //   - Nothing here compiles, acquires a compiler, or fetches code from anywhere
 //     but the portal.
 //
-// ## What it does not answer, stated
+// ## One key, not two -- Jackie's ruling, 28 September 2026 (WO-0928-D item 4)
+//
+// The appliance's existing ed25519 key at /etc/cairn-appliance/appliance.key
+// authenticates both directions of the conversation: it signs outbound
+// submissions, and it signs the two fetches here. The portal serves the digest
+// over that authenticated channel. There is no portal signing key and no
+// second appliance key -- nothing new to keep anywhere.
+//
+// ## What that leaves, stated
 //
 // The manifest and the bytes both come from the portal. A portal that was
 // itself compromised could serve a matching pair; the separate response defends
-// against a corrupted or substituted object, not against the source. A
-// publisher signature checked against a key the appliance carries would close
-// that, and is not built: it is a key-custody decision for Jackie.
+// against a corrupted or substituted object, not against the source. That is
+// the residual of the one-key decision, and it is the same trust the appliance
+// already places in the portal for its credential.
 
 import (
 	"bytes"

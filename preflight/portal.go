@@ -313,6 +313,13 @@ const runReportContentType = "application/vnd.cairn.run+json"
 // the way through: a report this binary re-serialised would be signed over one
 // spelling and sent as another.
 func reportRun(portal, fingerprint string, private ed25519.PrivateKey, report []byte) error {
+	return signedPost(portal, runReportPath, runReportContentType, fingerprint, private, report)
+}
+
+// signedPost sends bytes exactly as they were signed, to one portal path.
+// The run report and the DHCP submission are its two callers, so there is one
+// signing path rather than two that can come to differ.
+func signedPost(portal, path, contentType, fingerprint string, private ed25519.PrivateKey, report []byte) error {
 	nonceBytes := make([]byte, 16)
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return fmt.Errorf("generating a nonce: %w", err)
@@ -322,18 +329,18 @@ func reportRun(portal, fingerprint string, private ed25519.PrivateKey, report []
 	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
 
 	signature := ed25519.Sign(private, canonicalBytes(
-		http.MethodPost, runReportPath, fingerprint, timestamp, nonce, bodyHash(report),
+		http.MethodPost, path, fingerprint, timestamp, nonce, bodyHash(report),
 	))
 
 	request, err := http.NewRequest(
 		http.MethodPost,
-		strings.TrimRight(portal, "/")+runReportPath,
+		strings.TrimRight(portal, "/")+path,
 		bytes.NewReader(report),
 	)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", runReportContentType)
+	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cairn-Appliance", fingerprint)
 	request.Header.Set("Cairn-Timestamp", timestamp)
 	request.Header.Set("Cairn-Nonce", nonce)

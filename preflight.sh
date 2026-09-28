@@ -136,6 +136,7 @@ PC_CAPABILITIES=""
 PC_CAPABILITIES_SET=0
 PC_CONTROLLER=""
 PC_PASSWORD=""
+PC_DHCP_SERVERS=""
 parse_credential_block() {
   PC_USERNAME=""
   PC_REALM=""
@@ -143,6 +144,7 @@ parse_credential_block() {
   PC_CAPABILITIES_SET=0
   PC_CONTROLLER=""
   PC_PASSWORD=""
+  PC_DHCP_SERVERS=""
 
   local in_header=1 pw_started=0 line
 
@@ -156,6 +158,7 @@ parse_credential_block() {
         username=*)   PC_USERNAME="${line#username=}" ;;
         realm=*)      PC_REALM="${line#realm=}" ;;
         controller=*) PC_CONTROLLER="${line#controller=}" ;;
+        dhcp-servers=*) PC_DHCP_SERVERS="${line#dhcp-servers=}" ;;
         capabilities=*)
           PC_CAPABILITIES="${line#capabilities=}"
           PC_CAPABILITIES_SET=1
@@ -213,6 +216,31 @@ refuse_disagreement() {
 # expression out of this file rather than keeping a second copy of it.
 KINIT_PROMPT_STRIP='s/^Password for [^:]*: *//'
 DHCP_SERVERS="${CAIRN_DHCP_SERVERS:-}"
+DHCP_SERVERS_FROM=""
+
+# Which DHCP servers to ask. WO-0928-G item 3: the portal is where a client
+# names them, on the card where they allowed DHCP, so the portal's list wins.
+# The settings file is the fallback for a box configured before the portal
+# could hold a list, and the run says which one it used -- a list silently
+# coming from somewhere else is how a server nobody named gets asked.
+#
+# $1 is the portal's list (possibly empty), $2 the settings file's.
+choose_dhcp_servers() {
+  local portal="$1" local_list="$2"
+  if [ -n "$portal" ]; then
+    DHCP_SERVERS="$portal"
+    DHCP_SERVERS_FROM="the portal"
+    if [ -n "$local_list" ] && [ "$local_list" != "$portal" ]; then
+      DHCP_SERVERS_FROM="the portal; ${SETTINGS:-settings} also names ${local_list}, which is not used"
+    fi
+  elif [ -n "$local_list" ]; then
+    DHCP_SERVERS="$local_list"
+    DHCP_SERVERS_FROM="${SETTINGS:-settings}; the portal names none"
+  else
+    DHCP_SERVERS=""
+    DHCP_SERVERS_FROM=""
+  fi
+}
 
 say "Cairn appliance preflight"
 say "realm     ${REALM:-<unset>}"
@@ -591,6 +619,10 @@ capability_credential_source || true
 . "${HERE}/consent.sh"
 CONSENTED="$PC_CAPABILITIES"
 CONSENT_KNOWN="$PC_CAPABILITIES_SET"
+choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}"
+if [ -n "$DHCP_SERVERS" ]; then
+  say "dhcp      ${DHCP_SERVERS} (from ${DHCP_SERVERS_FROM})"
+fi
 say ""
 if [ "$CONSENT_KNOWN" -eq 1 ]; then
   say "consent   ${CONSENTED:-nothing granted}"
@@ -1376,7 +1408,7 @@ capability_dhcp() {
     return 1
   fi
   if [ -z "$DHCP_SERVERS" ]; then
-    say "NOT ASKED: CAIRN_DHCP_SERVERS is unset in ${SETTINGS}."
+    say "NOT ASKED: no DHCP server is named, in the portal or in ${SETTINGS}."
     UNASKED=$((UNASKED + 1))
     return 1
   fi

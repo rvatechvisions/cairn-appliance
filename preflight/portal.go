@@ -239,6 +239,10 @@ type directoryCredential struct {
 	// The Zabbix server to read, present only when Zabbix is granted and a
 	// server is named. Used by -collect-zabbix and never printed.
 	Zabbix *zabbixCredential `json:"zabbix"`
+	// The DHCP servers named in the portal, present only when DHCP is granted and
+	// somebody has named them. WO-0928-G item 3. Host names and single addresses,
+	// already refused there if they denoted a range.
+	DhcpServers *[]string `json:"dhcpServers"`
 }
 
 func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (directoryCredential, error) {

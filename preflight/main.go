@@ -545,6 +545,11 @@ func main() {
 			if credential.Capabilities != nil {
 				fmt.Printf("capabilities=%s\n", strings.Join(*credential.Capabilities, ","))
 			}
+			// Omitted when the portal named none, so the shell can tell "none named in
+			// the portal" from "an empty list" -- the portal never sends an empty one.
+			if credential.DhcpServers != nil && len(*credential.DhcpServers) > 0 {
+				fmt.Printf("dhcp-servers=%s\n", strings.Join(*credential.DhcpServers, ","))
+			}
 			fmt.Print("\n")
 			fmt.Print(credential.Password)
 			return

@@ -39,7 +39,7 @@ extract() {
   sed -n "/^${name}() {/,/^}/p" "$SCRIPT"
 }
 
-for fn in agrees parse_credential_block json_safe; do
+for fn in agrees parse_credential_block json_safe choose_dhcp_servers; do
   body="$(extract "$fn")"
   if [ -z "$body" ]; then
     printf 'FAIL: %s is not defined in preflight.sh — this test read nothing\n' "$fn"
@@ -48,7 +48,7 @@ for fn in agrees parse_credential_block json_safe; do
   eval "$body"
 done
 
-ok "the three functions were found in preflight.sh and evaluated"
+ok "the four functions were found in preflight.sh and evaluated"
 
 # ---------------------------------------------------------------------------
 # agrees: case-insensitively, because that is the fact
@@ -209,6 +209,23 @@ printf 'username=u\ncapabilities=ad,dhcp\n\ncapabilities=snmp\n' > "${TMPDIR:-/t
 parse_credential_block < "${TMPDIR:-/tmp}/cred-list.txt"
 [ "$PC_CAPABILITIES" = "ad,dhcp" ] && ok "the list is read from the header" || bad "the list read was ${PC_CAPABILITIES}"
 [ "$PC_PASSWORD" = "capabilities=snmp" ] && ok "a password that looks like a header is still the password" || bad "a header-shaped password was read as a header"
+
+# The DHCP servers, WO-0928-G item 3.
+printf 'username=u\ncapabilities=dhcp\ndhcp-servers=dhcp01.example.test,10.1.2.3\n\npw\n' > "${TMPDIR:-/tmp}/cred-dhcp.txt"
+parse_credential_block < "${TMPDIR:-/tmp}/cred-dhcp.txt"
+[ "$PC_DHCP_SERVERS" = "dhcp01.example.test,10.1.2.3" ] && ok "the DHCP servers are read from the header" || bad "the DHCP servers read were ${PC_DHCP_SERVERS}"
+parse_credential_block < "${TMPDIR:-/tmp}/cred-list.txt"
+[ -z "$PC_DHCP_SERVERS" ] && ok "no dhcp-servers line reads as none named" || bad "a list appeared from nowhere: ${PC_DHCP_SERVERS}"
+
+SETTINGS=settings.env
+choose_dhcp_servers "dhcp01.example.test" ""
+[ "$DHCP_SERVERS" = "dhcp01.example.test" ] && [ "$DHCP_SERVERS_FROM" = "the portal" ] && ok "the portal's list is used, and said to be" || bad "portal list: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
+choose_dhcp_servers "dhcp01.example.test" "old-dhcp.example.test"
+[ "$DHCP_SERVERS" = "dhcp01.example.test" ] && case "$DHCP_SERVERS_FROM" in *old-dhcp.example.test*"not used"*) true ;; *) false ;; esac && ok "a disagreeing file list is named and not used" || bad "disagreement: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
+choose_dhcp_servers "" "old-dhcp.example.test"
+[ "$DHCP_SERVERS" = "old-dhcp.example.test" ] && case "$DHCP_SERVERS_FROM" in *"the portal names none"*) true ;; *) false ;; esac && ok "the file list is the fallback, and said to be" || bad "fallback: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
+choose_dhcp_servers "" ""
+[ -z "$DHCP_SERVERS" ] && ok "neither names any, and none is asked" || bad "servers from nowhere: ${DHCP_SERVERS}"
 rm -f "${TMPDIR:-/tmp}/cred-none.txt" "${TMPDIR:-/tmp}/cred-empty.txt" "${TMPDIR:-/tmp}/cred-list.txt"
 
 printf '\n%s\n' "checks: ${checks}, failures: ${fails}"

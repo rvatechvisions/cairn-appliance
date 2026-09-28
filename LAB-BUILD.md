@@ -339,7 +339,7 @@ now.** On RVA's domain: `svc-cairn` in `DHCP Users`, preflight refused with
 preflight answered and enumerated the scope.
 
 **Where that restart is not a small thing, say so rather than asking for it
-quietly.** At Floyd the DHCP server is a production domain controller holding
+quietly.** At one district the DHCP server is a production domain controller holding
 3,405 leases. The restart takes seconds and the lease database survives it —
 but it is a service restart on a DC, and it gets announced rather than done
 mid-install. The patch-window wording above exists so that it usually does not

@@ -20,7 +20,7 @@
 
 | | |
 | --- | --- |
-| **Not a client box.** | Not Floyd, not anywhere. The client install is a different document and it waits on this one |
+| **Not a client box.** | Not a client’s network, not anywhere. The client install is a different document and it waits on this one |
 | **Do not touch the enrolled key.** | No `enroll.sh`, no regenerating, no revoking. The binding this box already has is what makes the test meaningful — a fresh key would test enrolment instead |
 | **Do not edit `preflight.sh`.** | If the run is wrong, that is the finding |
 

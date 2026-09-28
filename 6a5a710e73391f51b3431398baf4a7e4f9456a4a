@@ -1,0 +1,44 @@
+The DHCP reader: every scope read, the lease list kept here, the inventory sent signed
+
+WO-0928-B item 7. A -collect-dhcp mode that binds to MS-DHCPM exactly as the
+probe does (the bind is extracted from run() into bindDHCP, unchanged, so the
+two cannot come to differ), reads every page of every scope, reduces the
+leases in memory to what R20 permits, and posts the result to the portal's
+collection door signed with the appliance key (reportRun's signing extracted
+into signedPost, the same way).
+
+What leaves: one item per hardware address, carrying the address and the
+hostname as the server holds it (R19(2)). Coverage leaves as three counts. No
+IP, no scope, no subnet, no expiry, no lease state -- those are the lease
+list. Last seen is the collection time, because a lease records when it
+expires and working back from that is a date computed from a duration (0.3).
+A lease whose hardware address cannot be read travels as an empty item, so
+the portal counts it as it already counts one.
+
+The hardware address is accepted only in the three shapes MS-DHCPM 2.2.1.2.5
+names, each checked against the same record: six bytes; seven starting 0x01;
+eleven whose first four equal the client's own address ANDed with its mask,
+then 0x01. Anything else is refused and counted.
+
+NOT RUN AGAINST A DHCP SERVER. The parse follows the specification's worked
+example and has not met a live lease; the probe's own note that the lease
+path is proven to connect and not to parse still stands. No binary is
+committed: see the WO-0928-B report on how a binary reaches the box.
+
+Amended before any push: the first commit of this change took a stale message
+file from an earlier session, which named none of this.
+
+Read to establish the above:
+
+  go test -v for the three derivation tests and the submission test -- capture
+    2026-09-28T01-25-11-bash-9812.out, all four PASS
+  go vet . -- exit 0
+  MS-DHCPM, Representing a DHCPv4 Client Unique ID, learn.microsoft.com,
+    read 28 September 2026
+
+Plants, each confirmed red first and restored digest-identical (capture
+2026-09-28T01-25-59-node-3480.out): an 11-byte UID trimmed without checking
+its subnet; a scope list leaving with the coverage; the lease address leaving
+with the item; one device on two scopes sent twice.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

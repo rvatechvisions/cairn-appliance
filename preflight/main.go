@@ -335,6 +335,8 @@ func main() {
 	// serialised, and is signed and sent unchanged.
 	report := flag.Bool("report", false,
 		"read a run report from stdin and post it to the portal, signed")
+	collect := flag.Bool("collect-dhcp", false,
+		"read every scope on -server and submit the derived inventory to -portal, signed")
 	agreement := flag.Bool("agreement-fixture", false,
 		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
@@ -369,10 +371,10 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report {
+	if doEnrol || *fetch || *report || *collect {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enroll, -fetch or -report")
+				"preflight: -portal is required with -enroll, -fetch, -report or -collect-dhcp")
 			os.Exit(2)
 		}
 
@@ -419,6 +421,20 @@ func main() {
 			fmt.Fprintln(os.Stderr,
 				"preflight: no -fingerprint, and this box has not recorded one. Enrol first.")
 			os.Exit(2)
+		}
+
+		if *collect {
+			if *server == "" {
+				fmt.Fprintln(os.Stderr, "preflight: -server is required with -collect-dhcp")
+				os.Exit(2)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			defer cancel()
+			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			return
 		}
 
 		if *report {
@@ -608,7 +624,12 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, server string, scopeLimit int, transport, targetName string, debug bool) error {
+// bindDHCP is the authenticated, sealed bind to MS-DHCPM that the probe and
+// the collector share. Extracted from run() unchanged, so there is one way this
+// appliance reaches a DHCP server rather than two that can come to differ.
+func bindDHCP(ctx context.Context, server, transport, targetName string, debug bool) (
+	dhcpsrv.DHCPServerClient, dhcpsrv2.Dhcpsrv2Client, func(), context.Context, error,
+) {
 	// The ticket preflight.sh already holds, handed to the RPC layer.
 	//
 	// `gssapi.NewSecurityContext` alone establishes a context with no
@@ -623,7 +644,7 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	// the one that is wrong is whichever is read less.
 	ccname := os.Getenv("KRB5CCNAME")
 	if ccname == "" {
-		return fmt.Errorf("KRB5CCNAME is unset: this runs from preflight.sh, which sets it")
+		return nil, nil, nil, ctx, fmt.Errorf("KRB5CCNAME is unset: this runs from preflight.sh, which sets it")
 	}
 	// MIT writes it as a type-qualified name. Only FILE: is handled, because
 	// it is the only one preflight.sh creates -- and a MEMORY: cache could not
@@ -631,17 +652,17 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	// on tmpfs in the first place.
 	ccpath := strings.TrimPrefix(ccname, "FILE:")
 	if ccpath == ccname && strings.Contains(ccname, ":") {
-		return fmt.Errorf("KRB5CCNAME is %q, and only a FILE: cache can be read here", ccname)
+		return nil, nil, nil, ctx, fmt.Errorf("KRB5CCNAME is %q, and only a FILE: cache can be read here", ccname)
 	}
 
 	principal := os.Getenv("CAIRN_PRINCIPAL")
 	if principal == "" {
-		return fmt.Errorf("CAIRN_PRINCIPAL is unset: this runs from preflight.sh, which sets it")
+		return nil, nil, nil, ctx, fmt.Errorf("CAIRN_PRINCIPAL is unset: this runs from preflight.sh, which sets it")
 	}
 
 	cache, err := credentials.LoadCCache(ccpath)
 	if err != nil {
-		return fmt.Errorf("reading the ticket cache at %s: %w", ccpath, err)
+		return nil, nil, nil, ctx, fmt.Errorf("reading the ticket cache at %s: %w", ccpath, err)
 	}
 
 	// Kerberos only. No NTLM fallback, and that is deliberate: a fallback
@@ -677,9 +698,9 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	conn, err := dcerpc.Dial(ctx, server,
 		append([]dcerpc.Option{epm.EndpointMapper(ctx, server, mapperOptions...)}, logging...)...)
 	if err != nil {
-		return fmt.Errorf("dialling %s through the endpoint mapper: %w", server, err)
+		return nil, nil, nil, ctx, fmt.Errorf("dialling %s through the endpoint mapper: %w", server, err)
 	}
-	defer conn.Close(ctx)
+	closer := func() { conn.Close(ctx) }
 
 	// Two clients, one connection. Bound separately and reported separately,
 	// because a server can answer one interface and refuse the other -- and
@@ -721,15 +742,26 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 
 	servers, err := dhcpsrv.NewDHCPServerClient(ctx, conn, options...)
 	if err != nil {
-		return fmt.Errorf("binding DHCPSRV: %w", err)
+		closer()
+		return nil, nil, nil, ctx, fmt.Errorf("binding DHCPSRV: %w", err)
 	}
 
 	clients, err := dhcpsrv2.NewDhcpsrv2Client(ctx, conn, options...)
 	if err != nil {
-		return fmt.Errorf("binding DHCPSRV2: %w", err)
+		closer()
+		return nil, nil, nil, ctx, fmt.Errorf("binding DHCPSRV2: %w", err)
 	}
 
 	fmt.Printf("bound: MS-DHCPM on %s (DHCPSRV and DHCPSRV2)\n", server)
+	return servers, clients, closer, ctx, nil
+}
+
+func run(ctx context.Context, server string, scopeLimit int, transport, targetName string, debug bool) error {
+	servers, clients, closer, ctx, err := bindDHCP(ctx, server, transport, targetName, debug)
+	if err != nil {
+		return err
+	}
+	defer closer()
 
 	// ServerIPAddress is filled in, and it was empty until 20 September 2026.
 	//

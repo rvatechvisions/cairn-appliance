@@ -1538,6 +1538,50 @@ capability_dhcp() {
 run_capability dhcp capability_dhcp || true
 
 # ---------------------------------------------------------------------------
+# Zabbix: the hosts of an existing Zabbix server, WO-0928-F item 5a.
+#
+# The binary fetches the Zabbix address and token from the portal itself, on a
+# signed request, and holds them in memory for one host.get -- they never pass
+# through this shell. It needs no Kerberos ticket and reads no directory data.
+#
+# Its exit status carries the three states: 0 found, 3 NOT ASKED (Zabbix not
+# granted, no server named, or the credential could not be fetched -- none of
+# them the Zabbix server saying anything), anything else REFUSED.
+capability_zabbix() {
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT ASKED: there is no preflight binary at ${binary}."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is no Zabbix server to be told about."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local status=0
+  "$binary" -portal "${CAIRN_PORTAL}" -collect-zabbix || status=$?
+  case "$status" in
+    0)
+      FOUND=$((FOUND + 1))
+      return 0
+      ;;
+    3)
+      say "NOT ASKED: the binary asked no Zabbix server anything; its reason is above."
+      UNASKED=$((UNASKED + 1))
+      return 1
+      ;;
+    *)
+      say "REFUSED: the Zabbix server was asked and did not answer with hosts; the reason is above."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+}
+run_capability zabbix capability_zabbix || true
+
+# ---------------------------------------------------------------------------
 rule "what this appliance can reach"
 # **This tally counts SIX and the portal counts five, and both are right.**
 #

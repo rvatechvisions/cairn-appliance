@@ -41,6 +41,8 @@ step_permitted ldap "" && bad "ldap ran with nothing granted" || ok "nothing gra
 step_permitted kerberos "" && bad "kerberos ran with nothing granted" || ok "the prerequisite does not run with nothing granted"
 step_permitted kerberos "dhcp" && ok "the prerequisite runs when anything is granted" || bad "kerberos refused with DHCP granted"
 step_permitted ldap "xad" && bad "a partial name matched" || ok "matching is by whole name"
+step_permitted zabbix "ad,dhcp,snmp" && bad "zabbix ran without Zabbix consent" || ok "zabbix needs Zabbix consent"
+step_permitted zabbix "zabbix" && ok "zabbix runs on Zabbix consent" || bad "zabbix refused with Zabbix granted"
 
 if [ "$failures" -gt 0 ]; then
   printf '\n%s failure(s)\n' "$failures"

@@ -43,10 +43,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -339,6 +341,8 @@ func main() {
 		"fetch the binary the portal names, verify its SHA-256 against the manifest, and only then put it in place")
 	collect := flag.Bool("collect-dhcp", false,
 		"read every scope on -server and submit the derived inventory to -portal, signed")
+	collectZabbixHosts := flag.Bool("collect-zabbix", false,
+		"read the hosts of the Zabbix server the portal names and submit four fields per host, signed")
 	agreement := flag.Bool("agreement-fixture", false,
 		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
@@ -373,10 +377,10 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enroll, -fetch, -report or -collect-dhcp")
+				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp or -collect-zabbix")
 			os.Exit(2)
 		}
 
@@ -448,6 +452,21 @@ func main() {
 			defer cancel()
 			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *collectZabbixHosts {
+			// Exit 3 is a run that asked no Zabbix server anything -- not granted,
+			// or none named -- so the shell can count it NOT ASKED rather than
+			// REFUSED. Anything else that fails is exit 1.
+			client := &http.Client{Timeout: *timeout}
+			if err := collectZabbix(client, *portalURL, bound, private); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errZabbixNotAsked) {
+					os.Exit(3)
+				}
 				os.Exit(1)
 			}
 			return

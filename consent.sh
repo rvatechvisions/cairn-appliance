@@ -22,6 +22,9 @@
 #   dhcp              the preflight binary: MS-DHCPM R_DhcpEnumSubnets   dhcp
 #                     and R_DhcpEnumSubnetClientsV5 against the servers
 #                     named in the settings file, not ones read from AD
+#   zabbix            the preflight binary: one JSON-RPC host.get         zabbix
+#                     against the Zabbix server the portal names;
+#                     reads no directory data and needs no ticket
 #
 # kerberos is the one step that spans capabilities: every other step
 # authenticates through the ticket it obtains. It reads nothing itself, so it
@@ -34,6 +37,7 @@ step_capability() {
     kerberos) printf 'PREREQUISITE\n' ;;
     ldap|dns-zones|dhcp-authorized) printf 'ad\n' ;;
     dhcp) printf 'dhcp\n' ;;
+    zabbix) printf 'zabbix\n' ;;
     *) printf 'UNMAPPED\n' ;;
   esac
 }

@@ -236,6 +236,9 @@ type directoryCredential struct {
 	// is an older or broken portal and the shell collects nothing; the second
 	// is a client who has granted nothing.
 	Capabilities *[]string `json:"capabilities"`
+	// The Zabbix server to read, present only when Zabbix is granted and a
+	// server is named. Used by -collect-zabbix and never printed.
+	Zabbix *zabbixCredential `json:"zabbix"`
 }
 
 func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (directoryCredential, error) {

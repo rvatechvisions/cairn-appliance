@@ -48,7 +48,9 @@ fi
 # US English, because the portal and its clients are American, and a stored
 # token cannot be respelled later without splitting the history.
 
-EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap'
+# zabbix joined in WO-0928-F item 5a: the product's own name, spelled the same
+# in either English, and the name the portal's consent capability already uses.
+EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap zabbix'
 
 actual="$(grep -E '^run_capability ' "$SCRIPT" | awk '{print $2}' | sort | tr '\n' ' ' | sed 's/ $//')"
 

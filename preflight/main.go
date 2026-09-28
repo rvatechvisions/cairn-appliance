@@ -335,6 +335,8 @@ func main() {
 	// serialised, and is signed and sent unchanged.
 	report := flag.Bool("report", false,
 		"read a run report from stdin and post it to the portal, signed")
+	update := flag.Bool("update", false,
+		"fetch the binary the portal names, verify its SHA-256 against the manifest, and only then put it in place")
 	collect := flag.Bool("collect-dhcp", false,
 		"read every scope on -server and submit the derived inventory to -portal, signed")
 	agreement := flag.Bool("agreement-fixture", false,
@@ -371,7 +373,7 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect {
+	if doEnrol || *fetch || *report || *collect || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
 				"preflight: -portal is required with -enroll, -fetch, -report or -collect-dhcp")
@@ -421,6 +423,20 @@ func main() {
 			fmt.Fprintln(os.Stderr,
 				"preflight: no -fingerprint, and this box has not recorded one. Enrol first.")
 			os.Exit(2)
+		}
+
+		if *update {
+			// This binary, wherever it was started from, is the one replaced.
+			self, err := os.Executable()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "preflight: could not locate this binary:", err)
+				os.Exit(1)
+			}
+			if err := runUpdate(*portalURL, bound, private, self); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			return
 		}
 
 		if *collect {

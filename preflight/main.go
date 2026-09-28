@@ -343,6 +343,9 @@ func main() {
 		"read every scope on -server and submit the derived inventory to -portal, signed")
 	collectZabbixHosts := flag.Bool("collect-zabbix", false,
 		"read the hosts of the Zabbix server the portal names and submit four fields per host, signed")
+	relay := flag.Bool("relay", false,
+		"make the portal's checked read requests to the targets it names, for up to -relay-for")
+	relayFor := flag.Duration("relay-for", 10*time.Minute, "how long -relay asks the portal for work")
 	agreement := flag.Bool("agreement-fixture", false,
 		"print the canonical bytes and a signature over them, as JSON, for the portal suite")
 	flag.Parse()
@@ -377,7 +380,7 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *relay || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
 				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp or -collect-zabbix")
@@ -452,6 +455,19 @@ func main() {
 			defer cancel()
 			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *relay {
+			// Exit 3 is a run that relayed nothing because nothing was asked of it:
+			// no connection names this appliance, or no credential could be fetched.
+			if err := collectRelay(*portalURL, bound, private, *relayFor); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errRelayNotAsked) {
+					os.Exit(3)
+				}
 				os.Exit(1)
 			}
 			return

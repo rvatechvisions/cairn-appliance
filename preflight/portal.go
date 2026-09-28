@@ -243,6 +243,10 @@ type directoryCredential struct {
 	// somebody has named them. WO-0928-G item 3. Host names and single addresses,
 	// already refused there if they denoted a range.
 	DhcpServers *[]string `json:"dhcpServers"`
+	// The connections this appliance may relay for, each with the one origin
+	// it declared. WO-0928-G item 5. The relay checks every job against this
+	// list, fetched by this box, and never against the job itself.
+	RelayTargets []relayTarget `json:"relayTargets"`
 }
 
 func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (directoryCredential, error) {

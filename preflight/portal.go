@@ -239,6 +239,9 @@ type directoryCredential struct {
 	// The Zabbix server to read, present only when Zabbix is granted and a
 	// server is named. Used by -collect-zabbix and never printed.
 	Zabbix *zabbixCredential `json:"zabbix"`
+	// The vCenter to read, present only when vSphere is granted and a vCenter is
+	// named. WO-0929-A item 9. Used by -collect-vsphere and never printed.
+	Vsphere *vsphereCredential `json:"vsphere"`
 	// The DHCP servers named in the portal, present only when DHCP is granted and
 	// somebody has named them. WO-0928-G item 3. Host names and single addresses,
 	// already refused there if they denoted a range.

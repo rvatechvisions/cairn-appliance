@@ -43,6 +43,8 @@ step_permitted kerberos "dhcp" && ok "the prerequisite runs when anything is gra
 step_permitted ldap "xad" && bad "a partial name matched" || ok "matching is by whole name"
 step_permitted zabbix "ad,dhcp,snmp" && bad "zabbix ran without Zabbix consent" || ok "zabbix needs Zabbix consent"
 step_permitted zabbix "zabbix" && ok "zabbix runs on Zabbix consent" || bad "zabbix refused with Zabbix granted"
+step_permitted vsphere "ad,dhcp,snmp,zabbix" && bad "vsphere ran without vSphere consent" || ok "vsphere needs vSphere consent"
+step_permitted vsphere "vsphere" && ok "vsphere runs on vSphere consent" || bad "vsphere refused with vSphere granted"
 [ "$(step_capability relay)" = CONNECTION ] && ok "relay is consented per connection" || bad "relay maps to $(step_capability relay)"
 step_permitted relay "" && ok "relay runs with no collector capability granted; its consent is the connection" || bad "relay refused with nothing granted"
 

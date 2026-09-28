@@ -1614,6 +1614,45 @@ capability_zabbix() {
 run_capability zabbix capability_zabbix || true
 
 # ---------------------------------------------------------------------------
+# vSphere: the virtual machines an existing vCenter lists. WO-0929-A item 9.
+# The binary fetches the vCenter address and account itself, opens one
+# session, reads the list, ends the session and submits five fields per
+# machine. Exit 3 is NOT ASKED -- not granted, or no vCenter named.
+capability_vsphere() {
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT ASKED: there is no preflight binary at ${binary}."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is no vCenter to be told about."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local status=0
+  "$binary" -portal "${CAIRN_PORTAL}" -collect-vsphere || status=$?
+  case "$status" in
+    0)
+      FOUND=$((FOUND + 1))
+      return 0
+      ;;
+    3)
+      say "NOT ASKED: the binary asked no vCenter anything; its reason is above."
+      UNASKED=$((UNASKED + 1))
+      return 1
+      ;;
+    *)
+      say "REFUSED: vCenter was asked and did not answer with virtual machines; the reason is above."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+}
+run_capability vsphere capability_vsphere || true
+
+# ---------------------------------------------------------------------------
 # The relay: read requests the portal queues for connections an administrator
 # pointed at this appliance. WO-0928-G item 5, WO-0929-A item 3.
 #

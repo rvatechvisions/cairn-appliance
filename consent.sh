@@ -25,6 +25,9 @@
 #   zabbix            the preflight binary: one JSON-RPC host.get         zabbix
 #                     against the Zabbix server the portal names;
 #                     reads no directory data and needs no ticket
+#   vsphere           the preflight binary: GET /api/vcenter/vm against     vsphere
+#                     the vCenter the portal names, inside one session
+#                     it opens and ends; VMs only
 #   relay             the preflight binary: the checked read requests     (connection)
 #                     the portal queues for connections an administrator
 #                     pointed at THIS appliance; consent is each of those
@@ -43,6 +46,7 @@ step_capability() {
     ldap|dns-zones|dhcp-authorized) printf 'ad\n' ;;
     dhcp) printf 'dhcp\n' ;;
     zabbix) printf 'zabbix\n' ;;
+    vsphere) printf 'vsphere\n' ;;
     relay) printf 'CONNECTION\n' ;;
     *) printf 'UNMAPPED\n' ;;
   esac

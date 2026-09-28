@@ -51,7 +51,7 @@ fi
 # zabbix joined in WO-0928-F item 5a: the product's own name, spelled the same
 # in either English, and the name the portal's consent capability already uses.
 # relay joined in WO-0929-A item 3: the word the portal's step map uses.
-EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap relay zabbix'
+EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap relay vsphere zabbix'
 
 actual="$(grep -E '^run_capability ' "$SCRIPT" | awk '{print $2}' | sort | tr '\n' ' ' | sed 's/ $//')"
 

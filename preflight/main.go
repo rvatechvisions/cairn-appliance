@@ -343,6 +343,8 @@ func main() {
 		"read every scope on -server and submit the derived inventory to -portal, signed")
 	collectZabbixHosts := flag.Bool("collect-zabbix", false,
 		"read the hosts of the Zabbix server the portal names and submit four fields per host, signed")
+	collectVsphereVMs := flag.Bool("collect-vsphere", false,
+		"read the virtual machines the vCenter the portal names lists, and submit five fields per machine, signed")
 	relay := flag.Bool("relay", false,
 		"make the portal's checked read requests to the targets it names, for up to -relay-for")
 	relayFor := flag.Duration("relay-for", 10*time.Minute, "how long -relay asks the portal for work")
@@ -380,10 +382,10 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *relay || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *relay || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp or -collect-zabbix")
+				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix or -collect-vsphere")
 			os.Exit(2)
 		}
 
@@ -466,6 +468,20 @@ func main() {
 			if err := collectRelay(*portalURL, bound, private, *relayFor); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				if errors.Is(err, errRelayNotAsked) {
+					os.Exit(3)
+				}
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *collectVsphereVMs {
+			// Exit 3 is a run that asked no vCenter anything -- not granted, or none
+			// named. Anything else that fails is exit 1, vCenter's own ceiling included.
+			client := &http.Client{Timeout: *timeout}
+			if err := collectVsphere(client, *portalURL, bound, private); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errVsphereNotAsked) {
 					os.Exit(3)
 				}
 				os.Exit(1)

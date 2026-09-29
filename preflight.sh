@@ -1693,6 +1693,46 @@ capability_mecm() {
 run_capability mecm capability_mecm || true
 
 # ---------------------------------------------------------------------------
+# Proxmox VE: the guests a cluster lists. WO-0929-C item 6. The binary fetches
+# the address, the API token and the certificate fingerprint itself, reads the
+# resource list once with the token on the request, and submits six fields per
+# guest. It opens no session, trusts the one pinned certificate and returns
+# redirects. Exit 3 is NOT ASKED.
+capability_proxmox() {
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT ASKED: there is no preflight binary at ${binary}."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is no cluster to be told about."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local status=0
+  "$binary" -portal "${CAIRN_PORTAL}" -collect-proxmox || status=$?
+  case "$status" in
+    0)
+      FOUND=$((FOUND + 1))
+      return 0
+      ;;
+    3)
+      say "NOT ASKED: the binary asked no Proxmox VE cluster anything; its reason is above."
+      UNASKED=$((UNASKED + 1))
+      return 1
+      ;;
+    *)
+      say "REFUSED: the Proxmox VE cluster was asked and did not answer with guests; the reason is above."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+}
+run_capability proxmox capability_proxmox || true
+
+# ---------------------------------------------------------------------------
 # The relay: read requests the portal queues for connections an administrator
 # pointed at this appliance. WO-0928-G item 5, WO-0929-A item 3.
 #

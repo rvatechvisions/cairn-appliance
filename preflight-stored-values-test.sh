@@ -52,7 +52,8 @@ fi
 # in either English, and the name the portal's consent capability already uses.
 # relay joined in WO-0929-A item 3: the word the portal's step map uses.
 # mecm joined in WO-0929-B item 8: the portal's capability name for Configuration Manager.
-EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap mecm relay vsphere zabbix'
+# proxmox joined in WO-0929-C item 6: the portal's capability name for Proxmox VE.
+EXPECTED='dhcp dhcp-authorized dns-zones kerberos ldap mecm proxmox relay vsphere zabbix'
 
 actual="$(grep -E '^run_capability ' "$SCRIPT" | awk '{print $2}' | sort | tr '\n' ' ' | sed 's/ $//')"
 

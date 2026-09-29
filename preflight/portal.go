@@ -246,6 +246,10 @@ type directoryCredential struct {
 	// certificate it must present, present only when Configuration Manager is
 	// granted and one is named. WO-0929-B item 8. Used by -collect-mecm.
 	Mecm *mecmCredential `json:"mecm"`
+	// The Proxmox VE cluster to read -- its address, API token and the
+	// certificate it must present -- present only when Proxmox VE is granted and
+	// one is named. WO-0929-C item 6. Used by -collect-proxmox and never printed.
+	Proxmox *proxmoxCredential `json:"proxmox"`
 	// The DHCP servers named in the portal, present only when DHCP is granted and
 	// somebody has named them. WO-0928-G item 3. Host names and single addresses,
 	// already refused there if they denoted a range.

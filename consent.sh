@@ -32,6 +32,10 @@
 #                     Configuration Manager administration service the
 #                     portal names, with the ticket kerberos obtained,
 #                     trusting the one certificate the portal pins
+#   proxmox           the preflight binary: GET /cluster/resources from     proxmox
+#                     the Proxmox VE cluster the portal names, the API
+#                     token on the request and no session; guests only,
+#                     trusting the one certificate the portal pins
 #   relay             the preflight binary: the checked read requests     (connection)
 #                     the portal queues for connections an administrator
 #                     pointed at THIS appliance; consent is each of those
@@ -52,6 +56,7 @@ step_capability() {
     zabbix) printf 'zabbix\n' ;;
     vsphere) printf 'vsphere\n' ;;
     mecm) printf 'mecm\n' ;;
+    proxmox) printf 'proxmox\n' ;;
     relay) printf 'CONNECTION\n' ;;
     *) printf 'UNMAPPED\n' ;;
   esac

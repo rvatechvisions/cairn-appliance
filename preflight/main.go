@@ -345,6 +345,8 @@ func main() {
 		"read the hosts of the Zabbix server the portal names and submit four fields per host, signed")
 	collectVsphereVMs := flag.Bool("collect-vsphere", false,
 		"read the virtual machines the vCenter the portal names lists, and submit five fields per machine, signed")
+	collectProxmoxGuests := flag.Bool("collect-proxmox", false,
+		"read the guests the Proxmox VE cluster the portal names lists, and submit six fields per guest, signed")
 	collectMecmSystems := flag.Bool("collect-mecm", false,
 		"read the systems the Configuration Manager site the portal names has discovered, and submit five fields per system, signed")
 	relay := flag.Bool("relay", false,
@@ -384,10 +386,10 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *relay || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *collectProxmoxGuests || *relay || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix, -collect-vsphere or -collect-mecm")
+				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix, -collect-vsphere, -collect-mecm or -collect-proxmox")
 			os.Exit(2)
 		}
 
@@ -470,6 +472,20 @@ func main() {
 			if err := collectRelay(*portalURL, bound, private, *relayFor); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				if errors.Is(err, errRelayNotAsked) {
+					os.Exit(3)
+				}
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *collectProxmoxGuests {
+			// Exit 3 is a run that asked no cluster anything -- not granted, or none
+			// named. Anything else that fails is exit 1. The client is built inside,
+			// because it trusts one pinned certificate and returns redirects.
+			if err := collectProxmox(*portalURL, bound, private); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errProxmoxNotAsked) {
 					os.Exit(3)
 				}
 				os.Exit(1)

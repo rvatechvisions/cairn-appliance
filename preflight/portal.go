@@ -242,6 +242,10 @@ type directoryCredential struct {
 	// The vCenter to read, present only when vSphere is granted and a vCenter is
 	// named. WO-0929-A item 9. Used by -collect-vsphere and never printed.
 	Vsphere *vsphereCredential `json:"vsphere"`
+	// The Configuration Manager administration service to read, and the
+	// certificate it must present, present only when Configuration Manager is
+	// granted and one is named. WO-0929-B item 8. Used by -collect-mecm.
+	Mecm *mecmCredential `json:"mecm"`
 	// The DHCP servers named in the portal, present only when DHCP is granted and
 	// somebody has named them. WO-0928-G item 3. Host names and single addresses,
 	// already refused there if they denoted a range.

@@ -45,6 +45,8 @@ step_permitted zabbix "ad,dhcp,snmp" && bad "zabbix ran without Zabbix consent" 
 step_permitted zabbix "zabbix" && ok "zabbix runs on Zabbix consent" || bad "zabbix refused with Zabbix granted"
 step_permitted vsphere "ad,dhcp,snmp,zabbix" && bad "vsphere ran without vSphere consent" || ok "vsphere needs vSphere consent"
 step_permitted vsphere "vsphere" && ok "vsphere runs on vSphere consent" || bad "vsphere refused with vSphere granted"
+step_permitted mecm "ad,dhcp,snmp,zabbix,vsphere" && bad "mecm ran without Configuration Manager consent" || ok "mecm needs Configuration Manager consent"
+step_permitted mecm "mecm" && ok "mecm runs on Configuration Manager consent" || bad "mecm refused with Configuration Manager granted"
 [ "$(step_capability relay)" = CONNECTION ] && ok "relay is consented per connection" || bad "relay maps to $(step_capability relay)"
 step_permitted relay "" && ok "relay runs with no collector capability granted; its consent is the connection" || bad "relay refused with nothing granted"
 

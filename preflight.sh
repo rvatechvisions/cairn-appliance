@@ -1653,6 +1653,46 @@ capability_vsphere() {
 run_capability vsphere capability_vsphere || true
 
 # ---------------------------------------------------------------------------
+# Configuration Manager: the systems a site has discovered. WO-0929-B item 8.
+# The binary fetches the administration service address and its certificate
+# fingerprint itself, presents the Kerberos ticket this script already holds,
+# reads the system list and submits five fields per system. It trusts the one
+# pinned certificate and returns redirects. Exit 3 is NOT ASKED.
+capability_mecm() {
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT ASKED: there is no preflight binary at ${binary}."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is no site to be told about."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local status=0
+  "$binary" -portal "${CAIRN_PORTAL}" -collect-mecm || status=$?
+  case "$status" in
+    0)
+      FOUND=$((FOUND + 1))
+      return 0
+      ;;
+    3)
+      say "NOT ASKED: the binary asked no Configuration Manager site anything; its reason is above."
+      UNASKED=$((UNASKED + 1))
+      return 1
+      ;;
+    *)
+      say "REFUSED: the Configuration Manager site was asked and did not answer with systems; the reason is above."
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+  esac
+}
+run_capability mecm capability_mecm || true
+
+# ---------------------------------------------------------------------------
 # The relay: read requests the portal queues for connections an administrator
 # pointed at this appliance. WO-0928-G item 5, WO-0929-A item 3.
 #

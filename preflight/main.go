@@ -345,6 +345,8 @@ func main() {
 		"read the hosts of the Zabbix server the portal names and submit four fields per host, signed")
 	collectVsphereVMs := flag.Bool("collect-vsphere", false,
 		"read the virtual machines the vCenter the portal names lists, and submit five fields per machine, signed")
+	collectMecmSystems := flag.Bool("collect-mecm", false,
+		"read the systems the Configuration Manager site the portal names has discovered, and submit five fields per system, signed")
 	relay := flag.Bool("relay", false,
 		"make the portal's checked read requests to the targets it names, for up to -relay-for")
 	relayFor := flag.Duration("relay-for", 10*time.Minute, "how long -relay asks the portal for work")
@@ -382,10 +384,10 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *relay || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *relay || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
-				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix or -collect-vsphere")
+				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix, -collect-vsphere or -collect-mecm")
 			os.Exit(2)
 		}
 
@@ -468,6 +470,20 @@ func main() {
 			if err := collectRelay(*portalURL, bound, private, *relayFor); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				if errors.Is(err, errRelayNotAsked) {
+					os.Exit(3)
+				}
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *collectMecmSystems {
+			// Exit 3 is a run that asked no site anything -- not granted, or none
+			// named. Anything else that fails is exit 1. The client is built inside,
+			// because it trusts one pinned certificate and returns redirects.
+			if err := collectMecm(*portalURL, bound, private); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errMecmNotAsked) {
 					os.Exit(3)
 				}
 				os.Exit(1)

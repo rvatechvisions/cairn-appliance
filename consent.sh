@@ -28,6 +28,10 @@
 #   vsphere           the preflight binary: GET /api/vcenter/vm against     vsphere
 #                     the vCenter the portal names, inside one session
 #                     it opens and ends; VMs only
+#   mecm              the preflight binary: GET SMS_R_System from the       mecm
+#                     Configuration Manager administration service the
+#                     portal names, with the ticket kerberos obtained,
+#                     trusting the one certificate the portal pins
 #   relay             the preflight binary: the checked read requests     (connection)
 #                     the portal queues for connections an administrator
 #                     pointed at THIS appliance; consent is each of those
@@ -47,6 +51,7 @@ step_capability() {
     dhcp) printf 'dhcp\n' ;;
     zabbix) printf 'zabbix\n' ;;
     vsphere) printf 'vsphere\n' ;;
+    mecm) printf 'mecm\n' ;;
     relay) printf 'CONNECTION\n' ;;
     *) printf 'UNMAPPED\n' ;;
   esac

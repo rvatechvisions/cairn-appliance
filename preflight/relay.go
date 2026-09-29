@@ -48,10 +48,27 @@ const (
 
 // relayTarget is one connection this appliance may relay for, as the portal
 // named it on the credential call.
+//
+// A connection declares a LIST of origins -- several firewalls, several
+// vCenters -- and every request is checked against the whole list. Nothing
+// adds an origin at request time. WO-0929-D item 8. A portal that predates the
+// list sends Origin alone, and that one origin is the list.
 type relayTarget struct {
 	Connection string   `json:"connection"`
 	Origin     string   `json:"origin"`
+	Origins    []string `json:"origins"`
 	Posts      []string `json:"posts"`
+}
+
+// declared is every origin the connection declares.
+func (t relayTarget) declared() []string {
+	if len(t.Origins) > 0 {
+		return t.Origins
+	}
+	if t.Origin != "" {
+		return []string{t.Origin}
+	}
+	return nil
 }
 
 type relayJob struct {
@@ -96,8 +113,15 @@ func relayPermitted(targets []relayTarget, job relayJob) error {
 		return fmt.Errorf("an address carrying a user name is not relayed")
 	}
 	origin := parsed.Scheme + "://" + parsed.Host
-	if parsed.Scheme != "https" || origin != target.Origin {
-		return fmt.Errorf("%s is not the host this connection declared", origin)
+	listed := false
+	for _, declared := range target.declared() {
+		if origin == declared {
+			listed = true
+			break
+		}
+	}
+	if parsed.Scheme != "https" || !listed {
+		return fmt.Errorf("%s is not a host this connection declared", origin)
 	}
 	switch job.Method {
 	case http.MethodGet:

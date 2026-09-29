@@ -110,3 +110,26 @@ func TestPostsOnlyToAPathTheConnectionNames(t *testing.T) {
 		t.Fatalf("expected one POST made and one refused, got %d and %d after %d requests", ok.Status, refused.Status, *hits)
 	}
 }
+
+// WO-0929-D item 8b: a connection declaring several origins is relayed to any
+// of them and to nothing else, and a portal that sends Origin alone still works.
+func TestRelaysToEveryDeclaredOriginAndNoOther(t *testing.T) {
+	targets := []relayTarget{{Connection: "paloalto:org", Origins: []string{"https://fw-high.district.example", "https://fw-middle.district.example"}}}
+	for _, url := range []string{"https://fw-high.district.example/api/?type=op", "https://fw-middle.district.example/api/?type=op"} {
+		if err := relayPermitted(targets, relayJob{Connection: "paloalto:org", Method: "GET", URL: url}); err != nil {
+			t.Fatalf("%s refused: %v", url, err)
+		}
+	}
+	for _, url := range []string{"https://fw-elementary.district.example/api/", "https://fw-high.district.example:8443/api/"} {
+		if err := relayPermitted(targets, relayJob{Connection: "paloalto:org", Method: "GET", URL: url}); err == nil {
+			t.Fatalf("%s was relayed, and the connection never declared it", url)
+		}
+	}
+}
+
+func TestReadsAPortalThatSendsOneOrigin(t *testing.T) {
+	targets := []relayTarget{{Connection: "snipeit:org", Origin: "https://assets.district.example"}}
+	if err := relayPermitted(targets, relayJob{Connection: "snipeit:org", Method: "GET", URL: "https://assets.district.example/api/v1/hardware"}); err != nil {
+		t.Fatalf("a portal sending Origin alone is refused: %v", err)
+	}
+}

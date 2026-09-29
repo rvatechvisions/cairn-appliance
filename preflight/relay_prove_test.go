@@ -191,7 +191,7 @@ func TestRelayProvenAgainstStoodUpEndpoints(t *testing.T) {
 	}
 
 	// 2. The undeclared origin: refused by the appliance, naming the host.
-	if r := results["undeclared"]; r.Status != relayRefusal || !strings.Contains(string(decoded(t, r)), "is not the host this connection declared") {
+	if r := results["undeclared"]; r.Status != relayRefusal || !strings.Contains(string(decoded(t, r)), "is not a host this connection declared") {
 		t.Errorf("undeclared read: status %d, body %q", r.Status, decoded(t, r))
 	}
 
@@ -207,7 +207,7 @@ func TestRelayProvenAgainstStoodUpEndpoints(t *testing.T) {
 	if r := results["page-2"]; r.Status != 200 || string(decoded(t, r)) != `[{"id":"u2"}]` || !strings.Contains(r.Headers["link"], elsewhere.server.URL) {
 		t.Errorf("page 2: status %d, body %q, link %q", r.Status, decoded(t, r), r.Headers["link"])
 	}
-	if r := results["page-3-off-origin"]; r.Status != relayRefusal || !strings.Contains(string(decoded(t, r)), elsewhere.server.URL+" is not the host this connection declared") {
+	if r := results["page-3-off-origin"]; r.Status != relayRefusal || !strings.Contains(string(decoded(t, r)), elsewhere.server.URL+" is not a host this connection declared") {
 		t.Errorf("off-origin page: status %d, body %q", r.Status, decoded(t, r))
 	}
 

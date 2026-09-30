@@ -227,7 +227,7 @@ func promptForRegistrationKey() (string, error) {
 		// No terminal to ask at, and nothing piped either. Say both, because
 		// "no key" and "nowhere to ask" send a reader to different places.
 		return "", fmt.Errorf(
-			"no registration key: nothing was piped in and there is no terminal to ask at.\n"+
+			"no registration key: nothing was piped in and there is no terminal to ask at.\n" +
 				"       Run this from a terminal, or pipe the key in for an unattended run.")
 	}
 	defer tty.Close()

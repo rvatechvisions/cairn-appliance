@@ -447,16 +447,16 @@ func emitAgreementFixture(private ed25519.PrivateKey) error {
 	signature := ed25519.Sign(private, canonical)
 
 	out, err := json.MarshalIndent(map[string]any{
-		"note": "emitted by the appliance binary; never retyped",
-		"method": method,
-		"path": path,
-		"fingerprint": fingerprint,
-		"timestamp": timestamp,
-		"nonce": nonce,
-		"bodySha256": bodyHash(body),
-		"canonical": string(canonical),
+		"note":            "emitted by the appliance binary; never retyped",
+		"method":          method,
+		"path":            path,
+		"fingerprint":     fingerprint,
+		"timestamp":       timestamp,
+		"nonce":           nonce,
+		"bodySha256":      bodyHash(body),
+		"canonical":       string(canonical),
 		"signatureBase64": base64.StdEncoding.EncodeToString(signature),
-		"publicKeyPem": public,
+		"publicKeyPem":    public,
 	}, "", "  ")
 	if err != nil {
 		return err

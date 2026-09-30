@@ -40,10 +40,10 @@ import (
 )
 
 const (
-	relayNextPath           = "/appliance/relay/next"
-	relayResultPath         = "/appliance/relay/result"
-	relayResultContentType  = "application/vnd.cairn.relay+json"
-	relayBodyLimit    int64 = 16 << 20
+	relayNextPath                = "/appliance/relay/next"
+	relayResultPath              = "/appliance/relay/result"
+	relayResultContentType       = "application/vnd.cairn.relay+json"
+	relayBodyLimit         int64 = 16 << 20
 )
 
 // relayTarget is one connection this appliance may relay for, as the portal

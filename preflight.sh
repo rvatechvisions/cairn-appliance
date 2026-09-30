@@ -1100,16 +1100,31 @@ capability_ldap() {
   # One attribute, one object. This asks whether the directory answers at all,
   # not how large it is -- reading the whole tree to prove a bind worked is a
   # large read against somebody's domain controller for no extra information.
+  #
+  # The attribute is one the domain object carries. Until WO-0930-F this asked
+  # the domain head for dnsHostName, which lives on computer objects and on the
+  # rootDSE, not on the domain -- so a good bind came back as a bare "dn:" line
+  # and "answered" rested on the exit code alone. objectClass is on every
+  # object, and domainDNS is the class of a domain head, so seeing it is seeing
+  # the domain object read under this bind.
   local out
-  out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$BASE_DN" -s base dnsHostName 2>&1)"
+  out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$BASE_DN" -s base objectClass 2>&1)"
   local status=$?
 
   printf '%s\n' "$out" | sed 's/^/  /'
 
-  if [ $status -eq 0 ]; then
-    say "FOUND: the directory answered a bound read."
+  if [ $status -eq 0 ] && printf '%s\n' "$out" | grep -qi '^objectClass: domainDNS$'; then
+    say "FOUND: the directory answered a bound read of the domain object."
     FOUND=$((FOUND + 1))
     return 0
+  fi
+
+  if [ $status -eq 0 ]; then
+    say "REFUSED: the read completed but did not return the domain object's class,"
+    say "  so this is not evidence the bind can read the domain. The text above is"
+    say "  what came back."
+    REFUSED=$((REFUSED + 1))
+    return 1
   fi
 
   say "REFUSED: the bind or the read failed. The text above is the reason."
@@ -1262,10 +1277,19 @@ LDAP_OK=$?
 # ---------------------------------------------------------------------------
 # 3. DNS held in the directory
 #
-# Directory-integrated DNS lives under CN=MicrosoftDNS in the DomainDnsZones
-# partition. A domain whose DNS is not directory-integrated has no such
-# container, and that is a fact about the site rather than a failure -- so it
-# is reported as "not present" rather than as a refusal.
+# Directory-integrated DNS can live in three places, and a zone may be in any
+# of them: CN=MicrosoftDNS in the DomainDnsZones partition, the same in the
+# ForestDnsZones partition (under the forest root, which is not always this
+# domain), and CN=MicrosoftDNS,CN=System in the domain partition, where zones
+# made before the application partitions existed still sit. WO-0930-F item 5.
+#
+# Until then this read DomainDnsZones alone and took ANY non-zero exit as "no
+# directory-integrated DNS" -- so a refused read, a timeout and a zone kept in
+# the forest partition all came back as the same plausible answer. Now only
+# ldapsearch's 32, "No such object", means a container is absent; every other
+# failure is a read that did not happen, and says so. A domain whose DNS is not
+# directory-integrated has none of the three, and that is still reported as a
+# fact about the site rather than a failure.
 # ---------------------------------------------------------------------------
 rule "3. DNS zones in the directory"
 capability_dns() {
@@ -1275,30 +1299,76 @@ capability_dns() {
     return 1
   fi
 
-  local dns_dn="CN=MicrosoftDNS,DC=DomainDnsZones,${BASE_DN}"
-  say "looking under: ${dns_dn}"
+  # The forest root, from the rootDSE, because ForestDnsZones hangs off it and
+  # a child domain's own DN is not it. If it cannot be read, that container is
+  # a read that could not be asked, not one that is absent.
+  local root_out forest_dn
+  root_out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "" -s base rootDomainNamingContext 2>&1)"
+  local root_status=$?
+  forest_dn="$(printf '%s\n' "$root_out" | sed -n 's/^rootDomainNamingContext: //p')"
 
-  local out
-  out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$dns_dn" \
-          -s one '(objectClass=dnsZone)' dc 2>&1)"
-  local status=$?
+  local containers=(
+    "CN=MicrosoftDNS,DC=DomainDnsZones,${BASE_DN}"
+    "CN=MicrosoftDNS,CN=System,${BASE_DN}"
+  )
+  local unasked_forest=0
+  if [ $root_status -eq 0 ] && [ -n "$forest_dn" ]; then
+    containers+=("CN=MicrosoftDNS,DC=ForestDnsZones,${forest_dn}")
+  else
+    unasked_forest=1
+  fi
 
-  if [ $status -ne 0 ]; then
-    printf '%s\n' "$out" | sed 's/^/  /'
-    say "NOT PRESENT: no directory-integrated DNS under that container."
+  local zones="" present=0 absent=0 could_not=0 container out status
+  for container in "${containers[@]}"; do
+    say "looking under: ${container}"
+    out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$container" \
+            -s one '(objectClass=dnsZone)' dc 2>&1)"
+    status=$?
+    case $status in
+      0)
+        present=$((present + 1))
+        zones="$(printf '%s\n%s\n' "$zones" "$(printf '%s\n' "$out" | sed -n 's/^dc: //p')")"
+        ;;
+      32)
+        absent=$((absent + 1))
+        say "  not present: this container does not exist here."
+        ;;
+      *)
+        could_not=$((could_not + 1))
+        printf '%s\n' "$out" | sed 's/^/  /'
+        say "  COULD NOT BE ASKED: ldapsearch exited ${status}, which is not \"no such object\"."
+        ;;
+    esac
+  done
+  if [ $unasked_forest -eq 1 ]; then
+    could_not=$((could_not + 1))
+    printf '%s\n' "$root_out" | sed 's/^/  /'
+    say "  COULD NOT BE ASKED: the forest root was not readable from the rootDSE,"
+    say "  so the ForestDnsZones partition was not looked in."
+  fi
+
+  # Counted and listed, never compared against an expectation.
+  zones="$(printf '%s\n' "$zones" | sed '/^$/d' | sort -u)"
+  local count
+  count="$(printf '%s\n' "$zones" | grep -c . || true)"
+
+  if [ $could_not -gt 0 ]; then
+    say "REFUSED: ${could_not} place(s) DNS zones can be kept could not be read, so"
+    say "  what follows is not the whole list: ${count} zone(s) read from ${present}."
+    [ "$count" -gt 0 ] && printf '%s\n' "$zones" | sed 's/^/  /'
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+
+  if [ $present -eq 0 ]; then
+    say "NOT PRESENT: none of the ${absent} places directory-integrated DNS is kept exists here."
     say "  This is a normal state at a site whose DNS is not AD-integrated."
     say "  It is reported rather than treated as a failure."
     UNASKED=$((UNASKED + 1))
     return 1
   fi
 
-  # Counted and listed, never compared against an expectation.
-  local zones
-  zones="$(printf '%s\n' "$out" | sed -n 's/^dc: //p' | sort)"
-  local count
-  count="$(printf '%s\n' "$zones" | grep -c . || true)"
-
-  say "FOUND: ${count} zone(s) readable in the directory."
+  say "FOUND: ${count} zone(s) readable in the directory, from ${present} of ${#containers[@]} place(s)."
   printf '%s\n' "$zones" | sed 's/^/  /'
   say "  What is correct for this site is not something preflight can know."
   FOUND=$((FOUND + 1))

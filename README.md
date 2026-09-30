@@ -51,7 +51,9 @@ membership takes effect at the next DHCP service restart, **a normal patch
 window is enough**, and an immediate restart is only needed if you want it
 working today. That matters where the DHCP server is a production domain
 controller — one district’s holds 3,405 leases, and a restart there gets announced
-rather than done quietly mid-install.
+rather than done quietly mid-install. (That count was read by the Windows
+sender, Submit-DhcpInventory.ps1; no appliance is installed at that district,
+and none has yet delivered a reading anywhere.)
 
 ### Proven to connect. Not proven to parse.
 

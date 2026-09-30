@@ -151,6 +151,13 @@ func listGuests(client *http.Client, base string, credential proxmoxCredential) 
 	if err != nil {
 		return nil, fmt.Errorf("reading Proxmox VE's answer: %w", err)
 	}
+	// 401 and 403 are read as the token refused because that is what the two
+	// codes mean in HTTP, NOT because Proxmox documents them for a refused
+	// token: the status codes Proxmox VE answers a bad or under-privileged
+	// token with have not been read from a Proxmox source. Recorded as unread
+	// on 30 September 2026 (WO-0930-F item 5), so a refusal arriving as some
+	// other code falls to the named-status failure below rather than being
+	// guessed at.
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("Proxmox VE refused the API token (%d)", response.StatusCode)
 	}

@@ -27,8 +27,11 @@ package main
 // **Whether the administration service accepts a Negotiate header from a
 // client outside the domain is unverified.** Microsoft's pages say the caller
 // must be an administrative user in Configuration Manager and show a request
-// arriving as DOMAIN\user; they do not name the scheme. The first site that
-// answers is the verification.
+// arriving as DOMAIN\user, and the usage page says "Choose Windows
+// Authentication" and sends -UseDefaultCredentials -- so the scheme is Windows
+// authentication, which is Negotiate. What they do not say is Kerberos against
+// NTLM, and it is Kerberos this reader sends. Read 30 September 2026;
+// WO-0930-F item 5. The first site that answers is the verification.
 //
 // ## The certificate is the provider's own, and it is pinned
 //
@@ -53,6 +56,13 @@ package main
 // followed only when it stays on the provider's own origin and under
 // AdminService, and a list past mecmPageGuard pages is refused -- that ceiling
 // is ours, and Microsoft documents none for this route in what was read.
+//
+// WHETHER THE ADMINISTRATION SERVICE PAGES AT ALL IS UNREAD. Following a next
+// link is what an OData service does when it pages; no Microsoft page read says
+// that AdminService's WMI route does, at what size, or that it never does.
+// Recorded as unread rather than as matching on 30 September 2026 (WO-0930-F
+// item 5). A service that returned a truncated list with no next link would
+// not be detected here, and the first large site is what answers it.
 //
 // Built from Microsoft Learn, read 28 September 2026: What is the
 // administration service (the two routes, HTTPS, OData v4, the administrative

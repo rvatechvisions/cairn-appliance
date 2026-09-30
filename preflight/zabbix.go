@@ -163,8 +163,12 @@ func readZabbixHosts(client *http.Client, credential zabbixCredential) ([]Zabbix
 	var hosts []struct {
 		HostID string `json:"hostid"`
 		Name   string `json:"name"`
-		// An object when inventory is enabled on the host, and an empty array
-		// when it is not -- both are Zabbix's documented answers, so both parse.
+		// An object when inventory is enabled on the host. What comes back when
+		// it is not is NOT documented: neither the host.get page nor the host
+		// object page, in 6.4, 7.0 or 7.4, says -- read 30 September 2026. An
+		// empty array is what an unset inventory would plausibly serialize as,
+		// so it is parsed as well as an object, and that tolerance is ours
+		// rather than Zabbix's word. WO-0930-F item 5.
 		Inventory json.RawMessage `json:"inventory"`
 	}
 	if err := json.Unmarshal(answer.Result, &hosts); err != nil {

@@ -36,7 +36,13 @@ package main
 // is checked against something else in the same record, and anything else is
 // refused and counted rather than guessed at:
 //
-//   - 6 bytes: a bare hardware address.
+//   - 6 bytes: a bare hardware address. THIS ONE IS AN ASSUMPTION, not a
+//     documented representation: MS-DHCPM stores the client-identifier as-is
+//     and RFC 2132 section 9.14 describes one as a hardware type followed by
+//     an address, so nothing read documents a six-byte form. It is kept
+//     because a hardware address with no type byte is what such a value would
+//     be, and it stays until a server is seen sending one or not. Read on
+//     30 September 2026; WO-0930-F item 5.
 //   - 7 bytes starting 0x01: an RFC 2132 client-identifier of hardware type 1.
 //   - 11 bytes whose first four equal the client's own address ANDed with its
 //     own mask, then 0x01: the client unique ID, as the specification's worked

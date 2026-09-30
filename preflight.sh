@@ -1899,6 +1899,42 @@ fi
 # good is a judgement with a source and a review date and it belongs in the
 # rule store. This says what happened.
 # ---------------------------------------------------------------------------
+# The installed binary's own account of its build, for the run report.
+# WO-0930-J item 2.
+#
+# **The box reporting its own build is the only reliable signal of what runs
+# here.** A fetch from the portal shows a download, not an install, and the
+# timer runs whatever is at this path. So the report carries what the binary
+# says about itself (-version, its commit stamp) and the SHA-256 of the file
+# at the path the timer runs -- the digest the portal publishes binaries under.
+#
+# **Set into BINARY_JSON rather than printed**, because say() writes to the
+# same stream a command substitution would capture: a message printed here
+# would arrive inside the JSON.
+#
+# **A build that cannot be read is said out loud and not claimed.** The
+# portal reads a report without it as "build not reported", which is true;
+# a guessed or empty value would read as a build, which is not.
+BINARY_JSON=""
+binary_report_json() {
+  local binary="$1" stamp digest
+  BINARY_JSON=""
+  if [ ! -x "$binary" ]; then
+    say ""
+    say "BUILD NOT REPORTED: there is no binary at ${binary} to ask."
+    return 0
+  fi
+  stamp="$("$binary" -version 2>&1)" || stamp=""
+  digest="$(sha256sum "$binary" | cut -c1-64)" || digest=""
+  if [ -z "$stamp" ] || ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
+    say ""
+    say "BUILD NOT REPORTED: ${binary} did not say its build, or could not be hashed."
+    say "  The portal will say the build was not reported, rather than guess one."
+    return 0
+  fi
+  BINARY_JSON="$(printf ',"binary":{"stamp":"%s","sha256":"%s"}' "$(json_safe "$stamp")" "$digest")"
+}
+
 submit_run_report() {
   local finished payload status
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1945,17 +1981,19 @@ submit_run_report() {
     fi
   fi
 
+  binary_report_json "${HERE}/preflight/preflight"
+
   if [ "$CRED_FAILED" -eq 1 ]; then
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s}' "$interval_json"
+      printf '%s%s}' "$interval_json" "$BINARY_JSON"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s}' "$interval_json"
+      printf '%s%s}' "$interval_json" "$BINARY_JSON"
     } >"$payload"
   fi
 

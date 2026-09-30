@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	dhcpsrv "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v1"
@@ -33,10 +32,175 @@ import (
 const collectionPath = "/ingest/collection"
 
 // scopeCoverage is what the reading can say about its own reach.
+//
+// Unreadable counts every scope that could not be read COMPLETELY: one that
+// refused outright, one that failed part-way, and one whose server kept saying
+// there was more without sending anything new. A scope read in part is never
+// reported as a scope with few devices -- it is counted here, so the door
+// retires nothing on its strength. WO-0930-F item 1.
+//
+// Incomplete names each of those scopes, with what stopped it. It is printed on
+// this box and never sent: a scope address is the structure of the network the
+// lease list describes, and only the counts leave (R20).
 type scopeCoverage struct {
 	Attempted  int
 	Unreadable int
 	Empty      int
+	Incomplete []incompleteScope
+}
+
+// incompleteScope is one scope that could not be read completely, for the
+// box's own output.
+type incompleteScope struct {
+	Address string
+	Read    int
+	Reason  string
+}
+
+// The Win32 codes MS-DHCPM gives for its enumerations. R_DhcpEnumSubnets and
+// R_DhcpEnumSubnetClientsV5 both document ERROR_MORE_DATA as "there are more
+// elements available to enumerate" and ERROR_NO_MORE_ITEMS as "there are no
+// more elements left to enumerate" (MS-DHCPM, as carried in go-msrpc v1.6.4;
+// the Win32 DhcpEnumSubnetClientsV5 page, updated 2024-02-22, says of
+// ERROR_MORE_DATA: "call this function again with the returned resume handle").
+// Read on 30 September 2026.
+//
+// go-msrpc returns a non-zero code as an error AND hands back the response
+// carrying it, so the loops below read the code from the response rather than
+// matching text in the error.
+const (
+	dhcpErrorSuccess     = 0x00000000
+	dhcpErrorMoreData    = 0x000000EA
+	dhcpErrorNoMoreItems = 0x00000103
+)
+
+// dhcpPageGuard bounds one enumeration. A server answering ERROR_MORE_DATA for
+// ever would otherwise hold the run for ever; reaching the guard is reported as
+// a read that could not finish, never as a finished one.
+const dhcpPageGuard = 10000
+
+// enumerateSubnets reads every scope the server serves, page by page.
+//
+// The stop is the server's own code, never the resume handle: MS-DHCPM does not
+// say what the handle holds after the last page, so a loop that stopped when the
+// handle stopped moving would, on a server that resets it, start the list again.
+// A page that claims more and adds no scope not already seen is a server that
+// will not finish, and it is refused rather than looped on.
+//
+// No scopes at all is an answer. R_DhcpEnumSubnets answers ERROR_NO_MORE_ITEMS
+// on a server that serves none, which is what MS-DHCPM documents the code to
+// mean -- read from the specification, not yet seen from a server with no
+// scopes, and first contact is what confirms it.
+func enumerateSubnets(ctx context.Context, servers dhcpsrv.DHCPServerClient, server string) ([]uint32, error) {
+	var addresses []uint32
+	seen := map[uint32]bool{}
+	var resume uint32
+	for pages := 0; ; pages++ {
+		if pages == dhcpPageGuard {
+			return nil, fmt.Errorf("R_DhcpEnumSubnets was still answering ERROR_MORE_DATA after %d pages, so the scope list was not read completely", dhcpPageGuard)
+		}
+		page, err := servers.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
+			ServerIPAddress:  server,
+			Resume:           resume,
+			PreferredMaximum: 0xFFFFFFFF,
+		})
+		if page == nil {
+			if err == nil {
+				err = fmt.Errorf("no response")
+			}
+			return nil, fmt.Errorf("R_DhcpEnumSubnets: %w", err)
+		}
+		switch page.Return {
+		case dhcpErrorNoMoreItems:
+			return addresses, nil
+		case dhcpErrorSuccess, dhcpErrorMoreData:
+		default:
+			if err == nil {
+				err = fmt.Errorf("return code 0x%08X", page.Return)
+			}
+			return nil, fmt.Errorf("R_DhcpEnumSubnets: %w", err)
+		}
+		fresh := 0
+		if page.EnumInfo != nil {
+			for _, address := range page.EnumInfo.Elements {
+				if !seen[address] {
+					seen[address] = true
+					addresses = append(addresses, address)
+					fresh++
+				}
+			}
+		}
+		if page.Return == dhcpErrorSuccess {
+			return addresses, nil
+		}
+		if fresh == 0 {
+			return nil, fmt.Errorf("R_DhcpEnumSubnets answered ERROR_MORE_DATA and sent no scope not already read, so the scope list was not read completely")
+		}
+		resume = page.Resume
+	}
+}
+
+// readScope reads every lease in one scope, page by page, on the same rule as
+// enumerateSubnets. It returns what it read and whether that is the whole scope;
+// a scope that stopped part-way keeps what it read, and says why it stopped.
+//
+// ERROR_MORE_DATA is the server saying "there is more, ask again". Until
+// WO-0930-F it was read as a failure, so a scope larger than one reply --
+// 64 KB, the server's own ceiling on a reply -- came back as a scope that
+// refused, with nothing from it sent.
+func readScope(ctx context.Context, clients dhcpsrv2.Dhcpsrv2Client, server string, address uint32) ([]leaseRecord, bool, string) {
+	var records []leaseRecord
+	seen := map[uint32]bool{}
+	var resume uint32
+	for pages := 0; ; pages++ {
+		if pages == dhcpPageGuard {
+			return records, false, fmt.Sprintf("still answering ERROR_MORE_DATA after %d pages", dhcpPageGuard)
+		}
+		page, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
+			ServerIPAddress:  server,
+			SubnetAddress:    address,
+			Resume:           resume,
+			PreferredMaximum: 0xFFFFFFFF,
+		})
+		if page == nil {
+			if err == nil {
+				err = fmt.Errorf("no response")
+			}
+			return records, false, err.Error()
+		}
+		switch page.Return {
+		case dhcpErrorNoMoreItems:
+			return records, true, ""
+		case dhcpErrorSuccess, dhcpErrorMoreData:
+		default:
+			if err == nil {
+				err = fmt.Errorf("return code 0x%08X", page.Return)
+			}
+			return records, false, err.Error()
+		}
+		fresh := 0
+		if page.ClientInfo != nil {
+			for _, client := range page.ClientInfo.Clients {
+				if client == nil || seen[client.ClientIPAddress] {
+					continue
+				}
+				seen[client.ClientIPAddress] = true
+				record := leaseRecord{IP: client.ClientIPAddress, Mask: client.SubnetMask, HostName: client.ClientName}
+				if client.ClientHardwareAddress != nil {
+					record.UID = client.ClientHardwareAddress.Data
+				}
+				records = append(records, record)
+				fresh++
+			}
+		}
+		if page.Return == dhcpErrorSuccess {
+			return records, true, ""
+		}
+		if fresh == 0 {
+			return records, false, "the server answered ERROR_MORE_DATA and sent no lease not already read"
+		}
+		resume = page.Resume
+	}
 }
 
 type coverageCheck struct {
@@ -83,68 +247,26 @@ func buildSubmission(items []DerivedItem, coverage scopeCoverage, collectedAt ti
 }
 
 // readAllLeases walks every scope and every page of every scope. A scope that
-// refuses is counted and skipped, never read as empty: the door then declines
-// to retire anything this reading did not reach.
+// could not be read completely is counted as unreadable and named on this box,
+// never read as empty and never as a small scope: the door then declines to
+// retire anything this reading did not reach.
 func readAllLeases(ctx context.Context, servers dhcpsrv.DHCPServerClient, clients dhcpsrv2.Dhcpsrv2Client, server string) ([]leaseRecord, scopeCoverage, error) {
-	subnets, err := servers.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
-		ServerIPAddress:  server,
-		PreferredMaximum: 0xFFFFFFFF,
-	})
+	addresses, err := enumerateSubnets(ctx, servers, server)
 	if err != nil {
-		return nil, scopeCoverage{}, fmt.Errorf("R_DhcpEnumSubnets: %w", err)
-	}
-	var addresses []uint32
-	if subnets != nil && subnets.EnumInfo != nil {
-		addresses = subnets.EnumInfo.Elements
+		return nil, scopeCoverage{}, err
 	}
 
 	var leases []leaseRecord
 	coverage := scopeCoverage{}
 	for _, address := range addresses {
 		coverage.Attempted++
-		var resume uint32
-		read := 0
-		failed := false
-		for {
-			page, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
-				ServerIPAddress:  server,
-				SubnetAddress:    address,
-				Resume:           resume,
-				PreferredMaximum: 0xFFFFFFFF,
-			})
-			if err != nil {
-				if strings.Contains(err.Error(), "ERROR_NO_MORE_ITEMS") {
-					break
-				}
-				failed = true
-				break
-			}
-			if page == nil || page.ClientInfo == nil || len(page.ClientInfo.Clients) == 0 {
-				break
-			}
-			for _, client := range page.ClientInfo.Clients {
-				if client == nil {
-					continue
-				}
-				record := leaseRecord{IP: client.ClientIPAddress, Mask: client.SubnetMask, HostName: client.ClientName}
-				if client.ClientHardwareAddress != nil {
-					record.UID = client.ClientHardwareAddress.Data
-				}
-				leases = append(leases, record)
-				read++
-			}
-			// ERROR_MORE_DATA arrives as a successful page with a resume
-			// handle; a handle that does not move means the server has nothing
-			// further, and looping on it would never end.
-			if page.Resume == resume {
-				break
-			}
-			resume = page.Resume
-		}
+		records, complete, reason := readScope(ctx, clients, server, address)
+		leases = append(leases, records...)
 		switch {
-		case failed:
+		case !complete:
 			coverage.Unreadable++
-		case read == 0:
+			coverage.Incomplete = append(coverage.Incomplete, incompleteScope{Address: formatIPv4(address), Read: len(records), Reason: reason})
+		case len(records) == 0:
 			coverage.Empty++
 		}
 	}
@@ -167,7 +289,18 @@ func collectDHCP(ctx context.Context, server, transport, targetName string, debu
 	items, unkeyable := derive(leases)
 	leases = nil
 
-	fmt.Printf("scopes: %d attempted, %d refused, %d empty\n", coverage.Attempted, coverage.Unreadable, coverage.Empty)
+	if coverage.Attempted == 0 {
+		// Answered, and empty: a server with no scopes -- a failover partner that
+		// holds none, a server being decommissioned -- is a real state and not a
+		// refusal. The door refuses an empty submission, so nothing is sent.
+		fmt.Println("the server answered and serves no scopes. That is an answer, not a refusal; nothing was sent.")
+		return nil
+	}
+
+	fmt.Printf("scopes: %d attempted, %d could not be read completely, %d empty\n", coverage.Attempted, coverage.Unreadable, coverage.Empty)
+	for _, scope := range coverage.Incomplete {
+		fmt.Printf("  could not run to the end: scope %s, %d lease(s) read before it stopped: %s\n", scope.Address, scope.Read, scope.Reason)
+	}
 	fmt.Printf("devices: %d, from leases whose hardware address could be read; %d refused as unreadable\n", len(items), unkeyable)
 
 	if len(items) == 0 {

@@ -881,22 +881,17 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	// Sending what Windows sends costs nothing and removes the one observable
 	// discrepancy; if the refusal survives it, the cause is in the security
 	// layer rather than in the request, and that is a different investigation.
-	subnets, err := servers.EnumSubnets(ctx, &dhcpsrv.EnumSubnetsRequest{
-		ServerIPAddress:  server,
-		PreferredMaximum: 0xFFFFFFFF,
-	})
+	//
+	// Through the collector's own pager, so the probe and the collection cannot
+	// disagree about what a scope list is. It pages on the server's return code
+	// and answers ERROR_NO_MORE_ITEMS -- what a server serving no scopes returns
+	// -- as an empty list rather than an error, which is what lets the branch
+	// below run at all. Until WO-0930-F that code arrived here as an error and
+	// the probe exited, so "serves no scopes" could never be printed. Read from
+	// MS-DHCPM rather than seen from such a server; first contact confirms it.
+	addresses, err := enumerateSubnets(ctx, servers, server)
 	if err != nil {
-		return fmt.Errorf("R_DhcpEnumSubnets: %w", err)
-	}
-
-	// Read inline rather than through a helper, so no response type has to be
-	// named in a signature. The field names below are still unverified against
-	// the module -- the compiler is the authority for those and has not run
-	// yet -- and naming a type as well would be a second guess resting on the
-	// first.
-	var addresses []uint32
-	if subnets != nil && subnets.EnumInfo != nil {
-		addresses = subnets.EnumInfo.Elements
+		return err
 	}
 	fmt.Printf("R_DhcpEnumSubnets: %d scope(s)\n", len(addresses))
 	for _, address := range addresses {
@@ -942,11 +937,12 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 		//
 		// Seen on RVA's domain, 20 September 2026: 10.10.10.0 had no leases,
 		// and preflight reported it as unreadable.
-		if err != nil {
-			if strings.Contains(err.Error(), "ERROR_NO_MORE_ITEMS") {
-				fmt.Printf("  %-18s 0 lease(s) — the scope is empty\n", formatIPv4(address))
-				continue
-			}
+		//
+		// The code is read off the response, which go-msrpc hands back beside
+		// the error. ERROR_MORE_DATA is the server saying there is more, and
+		// this probe reads one page per scope as a sample, so it says so rather
+		// than reporting a large scope as one that could not be read.
+		if leases == nil || (leases.Return != dhcpErrorSuccess && leases.Return != dhcpErrorMoreData && leases.Return != dhcpErrorNoMoreItems) {
 			// Per scope, because one scope refusing is a different fact from
 			// the server refusing, and the difference is what somebody acts on.
 			fmt.Printf("  %-18s could not be read: %v\n", formatIPv4(address), err)
@@ -954,8 +950,13 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 		}
 
 		count := 0
-		if leases != nil && leases.ClientInfo != nil {
+		if leases.ClientInfo != nil {
 			count = len(leases.ClientInfo.Clients)
+		}
+		if leases.Return == dhcpErrorMoreData {
+			fmt.Printf("  %-18s %d lease(s) on the first page, and the server says there are more\n", formatIPv4(address), count)
+			observed += count
+			continue
 		}
 		if count == 0 {
 			fmt.Printf("  %-18s 0 lease(s) — the scope is empty\n", formatIPv4(address))

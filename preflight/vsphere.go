@@ -39,8 +39,8 @@ package main
 // ## The ceiling is vCenter's, and it is refused rather than worked around
 //
 // The list has no paging. When a vCenter holds more virtual machines than it
-// will return in one answer it refuses with HTTP 400 and the error type
-// unable_to_allocate_resource. That is read as a refusal, by name, and nothing
+// will return in one answer -- at most 4,000 -- it refuses with HTTP 500 and the
+// error type UNABLE_TO_ALLOCATE_RESOURCE. That is read as a refusal, by name, and nothing
 // is sent: Cairn carries no cap of its own, and a partial list read by
 // narrowing the filter until it fits would be a short list that looks whole.
 //
@@ -51,11 +51,18 @@ package main
 // source reports about the guest. The submission says so in a counted finding
 // rather than leaving it to be inferred.
 //
-// Built from the work order's statement of GET /api/vcenter/vm (the five
-// fields, their optionality, and the unable_to_allocate_resource refusal) and
-// from vCenter's session convention (POST and DELETE /api/session with the
-// vmware-api-session-id header). Broadcom's reference pages render only in a
-// browser and were not read here. Never run against a live vCenter.
+// Built from the work order's statement of GET /api/vcenter/vm and from
+// vCenter's session convention, then read against Broadcom's vSphere
+// Automation API 9.1 and 9.1.1 reference on 30 September 2026 (WO-0930-E item
+// 5), whose pages render server-side: GET /api/vcenter/vm "Returns information
+// about at most 4000 visible ... virtual machines"; 500 "if more than 4000
+// virtual machines match", as UnableToAllocateResource, whose discriminator is
+// UNABLE_TO_ALLOCATE_RESOURCE; 400 only for an unsupported power state, as
+// InvalidArgument. The first version checked for the ceiling under 400, from
+// the work order's statement, so the refusal it promised never fired. The
+// field Broadcom spells memory_size_mib is decoded under the tag below, which
+// encoding/json matches without regard to case. Never run against a live
+// vCenter.
 
 import (
 	"crypto/ed25519"
@@ -174,7 +181,8 @@ func listVMs(client *http.Client, base, session string) ([]VsphereItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading vCenter's answer: %w", err)
 	}
-	if response.StatusCode == http.StatusBadRequest {
+	// The ceiling, by the status and the name Broadcom documents for it.
+	if response.StatusCode == http.StatusInternalServerError {
 		var refusal struct {
 			ErrorType string `json:"error_type"`
 		}
@@ -182,7 +190,9 @@ func listVMs(client *http.Client, base, session string) ([]VsphereItem, error) {
 		if strings.EqualFold(refusal.ErrorType, "unable_to_allocate_resource") {
 			return nil, fmt.Errorf("%w: vCenter holds more virtual machines than it returns in one answer, and it said so; nothing was sent, because a list narrowed until it fits is a short list that looks whole", errVsphereTooMany)
 		}
-		return nil, fmt.Errorf("vCenter refused the virtual machine list (400)")
+	}
+	if response.StatusCode == http.StatusBadRequest {
+		return nil, fmt.Errorf("vCenter refused the virtual machine list (400), which Broadcom documents for an unsupported power state")
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("vCenter answered the virtual machine list with %d", response.StatusCode)

@@ -104,9 +104,12 @@ func TestReadsTheVMListAndKeepsAnAbsentOptionalFieldAbsent(t *testing.T) {
 	}
 }
 
+// Broadcom's 9.1 reference documents the ceiling as a 500 carrying
+// UNABLE_TO_ALLOCATE_RESOURCE. The first version of this test planted a 400,
+// from the work order's statement, and so did the reader. WO-0930-E item 5.
 func TestRefusesVcentersOwnCeilingByNameAndStillSignsOut(t *testing.T) {
 	f := newFakeVcenter(t, func(w http.ResponseWriter) {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error_type":"UNABLE_TO_ALLOCATE_RESOURCE","messages":[{"default_message":"Too many virtual machines. Add more filter criteria to reduce the number."}]}`))
 	})
 	items, _, err := readVsphere(f.server.Client(), credentialFor(f))
@@ -215,6 +218,19 @@ func TestASignOutVcenterRefusedIsReportedWithTheList(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `{"id":"vsphere-session-left-open","state":"found","count":1}`) {
 		t.Errorf("the submission does not report the open session: %s", body)
+	}
+}
+
+// A 500 that is not the ceiling is a failure named by its status, never
+// the ceiling by default.
+func TestAFiveHundredThatIsNotTheCeilingIsNotReadAsOne(t *testing.T) {
+	f := newFakeVcenter(t, func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error_type":"INTERNAL_SERVER_ERROR"}`))
+	})
+	_, _, err := readVsphere(f.server.Client(), credentialFor(f))
+	if err == nil || errors.Is(err, errVsphereTooMany) || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected a failure naming 500 and not the ceiling, got %v", err)
 	}
 }
 

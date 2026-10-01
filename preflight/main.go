@@ -127,7 +127,6 @@ var commit string
 // version is the tag, where a build had one. Same rules as commit.
 var version string
 
-// stamp is what -version prints and what a build check reads back.
 // relayedHeaders are the name=value lines -emit-credential can print, in the
 // order it prints them. A line is relayed exactly when the portal supplied the
 // field, so a binary that names a line here and omits it is reporting that the
@@ -140,6 +139,7 @@ func speaks() string {
 	return "credential-block: " + strings.Join(relayedHeaders, " ")
 }
 
+// stamp is what -version prints and what a build check reads back.
 func stamp() string {
 	c := commit
 	if c == "" {
@@ -155,7 +155,7 @@ func stamp() string {
 // readRegistrationKey takes the key from stdin so it is never an argument.
 //
 // **An argument is visible in /proc/<pid>/cmdline** to every user on the box
-// for as long as the process runs. On a lab box nobody else uses that is a
+// for as long as the process runs. On RVA's own appliance, which nobody else uses that is a
 // second or two of exposure to nobody; on a district's collector it is a host
 // on somebody else's network with somebody else's administrators on it, and
 // the key redeems into a binding that fetches a credential.
@@ -225,7 +225,7 @@ func readRegistrationKey() (string, error) {
 //
 // **stty rather than a dependency.** Turning echo off needs termios, and the
 // package for it is golang.org/x/term -- which means tidying the module against a
-// pinned module, the command that blocked a pull on the lab box and which
+// pinned module, the command that blocked a pull on RVA's own appliance and which
 // BUILD.md now tells people not to run. stty is on every host that has a
 // terminal to prompt at, and this branch only runs when there is one.
 //
@@ -318,7 +318,7 @@ func main() {
 	// somebody else's administrators on it.
 	// **Both spellings, and -enroll is the documented one.**
 	//
-	// The portal and its clients are American; the lab box and the runbook
+	// The portal and its clients are American; RVA's own appliance and the runbook
 	// have been using -enrol all week. A spelling change that broke a live
 	// procedure would be a worse defect than the one it fixes, so the old
 	// spelling keeps working and the help names the new one.

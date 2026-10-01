@@ -61,7 +61,7 @@ fi
 # and the exemption expires by itself.**
 #
 # Its `go 1.26.0` and `toolchain go1.27.1` lines are what fetched three
-# compilers onto the lab box -- go1.26.8 and go1.26.0 on 20 September, and
+# compilers onto RVA's own appliance -- go1.26.8 and go1.26.0 on 20 September, and
 # go1.27.1 at 05:44:30 on the 24th, three seconds into an unattended run. The
 # lines are correct for the machine that BUILDS the probe and wrong for a
 # machine that merely runs it.
@@ -162,7 +162,7 @@ done
 #
 # **The fourth refusal, and it is not implied by the other three.** Jackie’s
 # ruling, 24 September 2026, after a directory listing showed three Go
-# toolchains on the lab box -- go1.26.8 and go1.26.0 fetched on 20 September,
+# toolchains on RVA's own appliance -- go1.26.8 and go1.26.0 fetched on 20 September,
 # and go1.27.1 at **05:44:30 on the 24th, three seconds into an unattended
 # run.**
 #

@@ -1,6 +1,11 @@
 # Proving "nothing needs root", before changing anything
 
-**Written 20 September 2026. Jackie runs these on the lab box; nothing here
+> **Corrected 1 October 2026, relayed from Jackie with WO-1001-F:** what this
+> document called *the lab box* is RVA Tech Visions' own appliance, on RVA's
+> own network, configured as a client's would be. Its first submission will
+> carry RVA's real device inventory, not contrived data.
+
+**Written 20 September 2026. Jackie runs these on RVA's own appliance; nothing here
 changes the box.**
 
 > **PATHS CORRECTED 24 September 2026.** This document named `/opt/cairn`
@@ -95,7 +100,7 @@ is not the question — the question is the list.
 ## Sequencing, because two changes touch the same files
 
 **The self-compilation removal and the service-user change both edit
-`preflight.sh`, and the lab box must not be half-migrated overnight.**
+`preflight.sh`, and RVA's own appliance must not be half-migrated overnight.**
 
 So: **the service-user change waits for the signed binary.** Reasons, in order
 of weight:
@@ -174,7 +179,7 @@ discarded, and it comes out narrower and defensible.
 ### The limit on this read, stated rather than promoted
 
 **Debian 13 is not named by Atera. It is covered by *and above*, which is my
-reading rather than their sentence.** The lab box runs 13. Two independent
+reading rather than their sentence.** RVA's own appliance runs 13. Two independent
 searches returned the same supported list and neither quoted a version 13, so
 what is established is that 13 falls inside the documented range — not that
 Atera has tested it.

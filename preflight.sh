@@ -197,7 +197,7 @@ ${line}"
 #
 # The consent list arrives as one line of the block -emit-credential prints,
 # and a binary built before that line existed drops it without a word. The
-# 1 October 2026 run on the lab box was exactly that: a binary from
+# 1 October 2026 run on RVA's own appliance was exactly that: a binary from
 # 23 September, a script from that morning, and a run that told its operator
 # the portal had sent no list -- while the portal was sending one.
 #
@@ -1758,7 +1758,7 @@ capability_dhcp() {
   # its output looked exactly like work.
   #
   # **Submitting is held behind CAIRN_DHCP_SUBMIT=yes in settings.env**, set on
-  # the lab box only, by the staging the order author set: the first
+  # RVA's own appliance only, by the staging the order author set: the first
   # submission is from our own box, what crossed the boundary is read field by
   # field, and no client box submits until that has been read and said. A box
   # without it stays on the probe, and its run report says so in the note, so

@@ -1,5 +1,10 @@
 # Building the probe
 
+> **Corrected 1 October 2026, relayed from Jackie with WO-1001-F:** what this
+> document called *the lab box* is RVA Tech Visions' own appliance, on RVA's
+> own network, configured as a client's would be. Its first submission will
+> carry RVA's real device inventory, not contrived data.
+
 **Written 20 September 2026, at Jackie's instruction, because the Go half of
 this appliance has changes that have never been through a compiler.**
 
@@ -142,7 +147,7 @@ above the require blocks: *do not hand-edit go.sum*.
 **What running it now costs.** `tidy` rewrites `go.mod` from the local module
 cache, so the file differs from the committed one and the next `git pull
 --ff-only` aborts with *your local changes would be overwritten by merge*.
-On the lab box it also left an untracked `go.sum` that blocked the same pull a
+On RVA's own appliance it also left an untracked `go.sum` that blocked the same pull a
 second way. **Neither error mentions `tidy`**, so the reader is looking at git
 while the cause is three lines up in this document.
 
@@ -183,7 +188,7 @@ this build fetches. Since Go 1.21 a `go` or `toolchain` line the installed
 compiler cannot satisfy makes the build **download one**, and `go.sum` has
 no bearing on it.
 
-**Measured on the lab box, not argued.** Three toolchains sit in root’s
+**Measured on RVA's own appliance, not argued.** Three toolchains sit in root’s
 module cache: `go1.26.8` and `go1.26.0` fetched on 20 September 2026, and
 `go1.27.1` at **05:44:30 on 24 September, three seconds into an unattended
 run.** Every one of them arrived over the wire because a directive here

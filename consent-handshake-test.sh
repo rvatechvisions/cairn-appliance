@@ -4,7 +4,7 @@
 #
 # ## What happened
 #
-# On 1 October 2026 the lab box ran a binary from 23 September under a script
+# On 1 October 2026 RVA's own appliance ran a binary from 23 September under a script
 # from that morning. The portal sent a consent list; the binary had no field
 # for it and dropped it; the script read the missing line as "the portal sent
 # no consent list" and printed NOT ASKED against ten capabilities. Every

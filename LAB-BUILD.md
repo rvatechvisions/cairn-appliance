@@ -1,5 +1,10 @@
 # Running the appliance against RVA's own domain
 
+> **Corrected 1 October 2026, relayed from Jackie with WO-1001-F:** what this
+> document called *the lab box* is RVA Tech Visions' own appliance, on RVA's
+> own network, configured as a client's would be. Its first submission will
+> carry RVA's real device inventory, not contrived data.
+
 **Start here. This is the guide to the environment; `README.md` is the guide to
 the appliance.** It assumes you have read neither that file nor anything else.
 
@@ -136,7 +141,7 @@ internet.
 
 ### Updating a box that has already run
 
-**The lab box is in this state, so this is the path rather than a footnote.**
+**RVA's own appliance is in this state, so this is the path rather than a footnote.**
 After the first run it holds three things the repository now disagrees with:
 a modified `preflight/go.mod`, an untracked `preflight/go.sum`, and a stale
 stamped binary called `preflight-5c3273b`.
@@ -194,7 +199,7 @@ telling you which.
 **Then re-run the three commands in section 4.**
 
 **A pull updates the scripts and NOT the binary.** Added 1 October 2026
-(WO-1001-D item 5), after exactly that happened on the lab box: a morning's
+(WO-1001-D item 5), after exactly that happened on RVA's own appliance: a morning's
 pull brought scripts that expect a consent list, the binary on the box was
 from 23 September and could not hear one, and the run read the silence as the
 portal sending none. Nothing on the box builds the binary, so after a pull
@@ -207,7 +212,7 @@ that is true of MODULES and false of the TOOLCHAIN.** `go.sum` governs
 module checksums, so with one present nothing is fetched to resolve
 imports. It says nothing about the compiler: a `toolchain` directive the
 local `go` cannot satisfy is obtained from Go’s toolchain service
-**regardless of `go.sum`**, and that is what happened on the lab box at
+**regardless of `go.sum`**, and that is what happened on RVA's own appliance at
 05:44 on 24 September — systemd found a distribution `go1.24` and
 `toolchain go1.27.1` made it acquire 1.27.1.
 

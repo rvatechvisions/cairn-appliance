@@ -73,7 +73,7 @@ ok "the probe built from the current source"
 # The flag spelling: -enroll documented, -enrol still working
 # ---------------------------------------------------------------------------
 #
-# Both, because the lab box and the runbook have been using -enrol all week and
+# Both, because RVA's own appliance and the runbook have been using -enrol all week and
 # a spelling change that broke a live procedure would be a worse defect than
 # the one it fixes.
 

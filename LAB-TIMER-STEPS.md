@@ -1,6 +1,11 @@
-# Putting the lab box on the timer
+# Putting RVA's own appliance on the timer
 
-**For Jackie, at the lab box. 23 September 2026.**
+> **Corrected 1 October 2026, relayed from Jackie with WO-1001-F:** what this
+> document called *the lab box* is RVA Tech Visions' own appliance, on RVA's
+> own network, configured as a client's would be. Its first submission will
+> carry RVA's real device inventory, not contrived data.
+
+**For Jackie, at RVA's own appliance. 23 September 2026.**
 
 > # THIS IS THE FIRST TEST OF THE SCHEDULE PATH ON REAL HARDWARE.
 >
@@ -11,9 +16,9 @@
 >
 > So the point of this is not to get a timer working. It is to find out what
 > the schedule path does on hardware — and **a step that fails here is the
-> whole return on doing it at the lab box rather than at a client.**
+> whole return on doing it at RVA's own appliance rather than at a client.**
 
-**This is the lab box only.** It is already enrolled and it already runs
+**This is RVA's own appliance only.** It is already enrolled and it already runs
 `preflight.sh` by hand.
 
 ## What NOT to do

@@ -128,6 +128,18 @@ var commit string
 var version string
 
 // stamp is what -version prints and what a build check reads back.
+// relayedHeaders are the name=value lines -emit-credential can print, in the
+// order it prints them. A line is relayed exactly when the portal supplied the
+// field, so a binary that names a line here and omits it is reporting that the
+// portal sent none -- which is the sentence a binary that does not name it
+// cannot support.
+var relayedHeaders = []string{"username", "realm", "controller", "capabilities", "dhcp-servers"}
+
+// speaks is the -speaks answer: the credential-block lines this binary relays.
+func speaks() string {
+	return "credential-block: " + strings.Join(relayedHeaders, " ")
+}
+
 func stamp() string {
 	c := commit
 	if c == "" {
@@ -291,6 +303,7 @@ func main() {
 	transport := flag.String("transport", "ncacn_ip_tcp:",
 		"the RPC transport to request; Windows tools commonly use ncacn_np:")
 	showVersion := flag.Bool("version", false, "print the commit this binary was built from, and exit")
+	showSpeaks := flag.Bool("speaks", false, "print the credential-block lines this binary relays, and exit")
 
 	// Talking to the portal. Two verbs, because they are two different acts:
 	// one redeems a grant and one spends an identity.
@@ -361,6 +374,18 @@ func main() {
 	// on a box with no domain, which is where a build is verified.
 	if *showVersion {
 		fmt.Println(stamp())
+		return
+	}
+
+	// **What this binary can hear, declared before anything is asked of it.**
+	// WO-1001-D item 2. The script reads the consent list out of the block
+	// -emit-credential prints, and a binary built before that line existed
+	// drops it without a word -- so the script read the silence as the portal
+	// sending no list. A binary older than this flag rejects it, and that
+	// rejection is what lets the script say the binary is too old rather than
+	// blame the portal.
+	if *showSpeaks {
+		fmt.Println(speaks())
 		return
 	}
 

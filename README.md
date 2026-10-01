@@ -294,10 +294,13 @@ collector rather than an argument.
 one read-only account, three commands, and what every line of preflight's
 output means — written for somebody who has read none of this.
 
-**Building the Go probe on its own? `BUILD.md`.** `preflight.sh` always
-rebuilds it, so a normal run needs nothing extra — that document is for when
-you want the compiler's output without a domain read after it, and it carries
-the three reads that tie a binary to the commit it came from.
+**Building the Go probe? `BUILD.md`, on the workstation.** ~~`preflight.sh` always
+rebuilds it, so a normal run needs nothing extra~~ — withdrawn 1 October 2026
+(WO-1001-D item 5): `preflight.sh` has built nothing since 24 September 2026.
+The binary is built on the workstation, published to the portal, and installed
+on a box by `INSTALL-STEPS.md` step 2b, which checks it against the published
+digest. `BUILD.md` carries the three reads that tie a binary to the commit it
+came from.
 
 ### The first run is against RVA Tech Visions' own production domain
 

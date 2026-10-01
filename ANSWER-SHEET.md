@@ -120,9 +120,13 @@ it would end the appliance's read-only position on DHCP for no benefit.
 
 ## Three things to expect
 
-**The DHCP probe will not build first time.** It has never been compiled —
+~~**The DHCP probe will not build first time.** It has never been compiled —
 no Go toolchain on the machine that wrote it. `cd preflight && go mod tidy &&
-go build .` and correct the names the compiler objects to.
+go build .` and correct the names the compiler objects to.~~ **Withdrawn
+1 October 2026 (WO-1001-D item 5)**: nothing is built on the appliance, and
+`go mod tidy` was already withdrawn in `BUILD.md` on 21 September. The binary
+is built on the workstation, published to the portal, and installed on the box
+by `INSTALL-STEPS.md` step 2b.
 
 **Preflight asserts no expected count.** It will not tell you the site is
 missing a DHCP server or a zone. It cannot know. It prints what answered.

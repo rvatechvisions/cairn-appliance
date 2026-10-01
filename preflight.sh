@@ -94,6 +94,20 @@ FIELD_SOURCE="settings.env"
 # and this is the variable that keeps the two apart all the way to the
 # portal's card.
 CRED_FAILED=0
+
+# **A fourth count, and it is about this box rather than the customer's
+# network.** WO-1001-D item 2. FOUND, REFUSED and UNASKED are the three things
+# a run can say about what it asked of a client's systems. NOTRUN is a step
+# this box never got as far as considering, because its own software could not
+# hear what it may read -- and folding that into UNASKED is how ten
+# capabilities were reported as not asked when nobody had asked anything.
+NOTRUN=0
+
+# Whether the consent list could have been heard, and if not, why. Set by the
+# credential step; read by settle_consent. A component may report what it was
+# told; it may not report what it failed to hear as what it was told.
+CONSENT_FETCHED=0
+CONSENT_UNHEARD="no credential came from the portal, so no consent list arrived with one"
 CRED_REASON=""
 
 # When this run began, in UTC, stamped once and reported with the run.
@@ -176,6 +190,67 @@ parse_credential_block() {
 ${line}"
     fi
   done
+}
+
+# **Ask the binary what it can hear before asking it anything.** WO-1001-D
+# item 2.
+#
+# The consent list arrives as one line of the block -emit-credential prints,
+# and a binary built before that line existed drops it without a word. The
+# 1 October 2026 run on the lab box was exactly that: a binary from
+# 23 September, a script from that morning, and a run that told its operator
+# the portal had sent no list -- while the portal was sending one.
+#
+# So the binary declares, through -speaks, the lines it relays. A binary older
+# than the flag rejects it, and the rejection is the answer: this box cannot
+# hear its consent list, which is a fact about this box and never about the
+# portal or the customer.
+#
+# Sets BINARY_SPEAKS to what the binary said. Returns 0 when it declares the
+# consent list, 1 when it answers without declaring it, 2 when there is no
+# binary to ask.
+BINARY_SPEAKS=""
+binary_hears_consent() {
+  local binary="$1"
+  BINARY_SPEAKS=""
+  if [ ! -x "$binary" ]; then
+    return 2
+  fi
+  BINARY_SPEAKS="$("$binary" -speaks 2>&1)" || BINARY_SPEAKS="${BINARY_SPEAKS:-it answered nothing}"
+  case " ${BINARY_SPEAKS#credential-block:} " in
+    *" capabilities "*) return 0 ;;
+  esac
+  return 1
+}
+
+# What this run knows about its consent list, settled once and said once.
+#
+# Three answers, and only one of them is about the portal:
+#   - the list arrived, and says what this box may read;
+#   - a binary that relays the list fetched from the portal and there was no
+#     list in the answer, so the portal sent none;
+#   - no list was HEARD, for the reason in CONSENT_UNHEARD, and this box
+#     cannot tell whether the portal sent one.
+# Sets CONSENT_KNOWN and CONSENTED, and prints the line.
+settle_consent() {
+  CONSENTED="$PC_CAPABILITIES"
+  CONSENT_KNOWN="$PC_CAPABILITIES_SET"
+  if [ "$CONSENT_KNOWN" -eq 1 ]; then
+    say "consent   ${CONSENTED:-nothing granted}"
+    return 0
+  fi
+  if [ "$CONSENT_FETCHED" -eq 1 ]; then
+    CONSENT_UNHEARD="the portal sent no list of what this collector may read"
+    say "NO CONSENT LIST: the portal answered without one, so nothing will be read."
+  else
+    say "NO CONSENT LIST WAS HEARD: ${CONSENT_UNHEARD}."
+    say "  This box cannot tell whether the portal sent one, so nothing will be"
+    say "  read -- and no step below is reported as a finding about the network."
+  fi
+  if [ "$CRED_FAILED" -eq 0 ]; then
+    CRED_FAILED=1
+    CRED_REASON="${CONSENT_UNHEARD}, so nothing was read"
+  fi
 }
 
 # Refuse a leftover that disagrees, naming BOTH values.
@@ -468,6 +543,35 @@ capability_credential_source() {
     local fetched=""
     local fetch_status=0
 
+    # The handshake comes before the fetch, so a binary that could not hear
+    # the consent list never spends a nonce on a credential it would then
+    # hand over without one.
+    local hears=0
+    binary_hears_consent "${HERE}/preflight/preflight" || hears=$?
+    if [ "$hears" -ne 0 ]; then
+      local found_stamp
+      found_stamp="$("${HERE}/preflight/preflight" -version 2>&1)" || found_stamp="${found_stamp:-no answer}"
+      say ""
+      if [ "$hears" -eq 2 ]; then
+        say "NOT RUN: there is no binary at ${HERE}/preflight/preflight to fetch with."
+        CONSENT_UNHEARD="there is no binary on this box to fetch the consent list with"
+      else
+        say "NOT RUN: the installed binary is too old to hear the consent list."
+        say "  needs:  a binary whose -speaks declares the capabilities line"
+        say "  found:  ${found_stamp}"
+        say "  -speaks answered: ${BINARY_SPEAKS}"
+        CONSENT_UNHEARD="the installed binary (${found_stamp}) is older than the consent list and cannot hear it"
+      fi
+      say ""
+      say "  Nothing was fetched, nothing was asked of the domain, and nothing"
+      say "  here is about the portal or the customer. Install the published"
+      say "  binary by the path in INSTALL-STEPS.md and run this again."
+      NOTRUN=$((NOTRUN + 1))
+      CRED_FAILED=1
+      CRED_REASON="${CONSENT_UNHEARD}; nothing was fetched or read"
+      return 1
+    fi
+
     # -emit writes ONLY the password to stdout; the username and any refusal
     # go to stderr, which is left attached so the operator sees them. The
     # value is captured into a variable and never echoed.
@@ -495,18 +599,29 @@ capability_credential_source() {
       # -emit-credential with a bare password, or a newer portal answering
       # something this script does not recognise. Handing whatever came back
       # to kinit would put a failed logon in a customer’s domain.
+      # **What is missing is what the BINARY printed**, and nothing here can
+      # see past it to what the portal sent -- so the sentence names the
+      # binary. It was counted REFUSED and blamed the portal until WO-1001-D
+      # item 2, and told the operator to rebuild on a box that has had no
+      # compiler since 24 September 2026.
       if [ -z "$portal_username" ] || [ -z "${CAIRN_PASSWORD:-}" ]; then
         say ""
-        say "REFUSED: the portal's answer did not carry the fields this run needs."
-        say "  Expected a username line and a password after a blank line."
-        say "  The usual cause is a binary and a script from different pulls:"
-        say "  run git pull --ff-only in the appliance repository, rebuild, and"
-        say "  try again. Nothing was typed and nothing was sent to the domain."
-        REFUSED=$((REFUSED + 1))
+        say "NOT RUN: the binary's credential block did not carry the fields this"
+        say "  run needs -- a username line, and a password after a blank line."
+        say "  This box cannot tell whether the portal sent them. The usual cause"
+        say "  is a binary and a script from different installs: install the"
+        say "  published binary by the path in INSTALL-STEPS.md and try again."
+        say "  Nothing was typed and nothing was sent to the domain."
+        NOTRUN=$((NOTRUN + 1))
         CRED_FAILED=1
-        CRED_REASON="the portal's answer did not carry the expected fields"
+        CRED_REASON="the binary's credential block did not carry the expected fields"
+        CONSENT_UNHEARD="the binary's credential block was incomplete, so no consent list was read from it"
         return 1
       fi
+
+      # Fetched by a binary that declared the consent list, so an absent list
+      # below is the portal's answer rather than this box's silence.
+      CONSENT_FETCHED=1
 
       export CAIRN_PASSWORD
 
@@ -578,6 +693,7 @@ capability_credential_source() {
   fi
 
   if [ -n "${CAIRN_PASSWORD:-}" ]; then
+    CONSENT_UNHEARD="the credential came from this terminal, and only the portal fetch carries a consent list"
     say ""
     say "CREDENTIAL SOURCE: this operator's terminal, for this run only."
     say "  This is the lab path. It is honest about what it is: the credential"
@@ -617,23 +733,12 @@ capability_credential_source || true
 # The run is then reported as could-not-start, naming why.
 # ---------------------------------------------------------------------------
 . "${HERE}/consent.sh"
-CONSENTED="$PC_CAPABILITIES"
-CONSENT_KNOWN="$PC_CAPABILITIES_SET"
 choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}"
 if [ -n "$DHCP_SERVERS" ]; then
   say "dhcp      ${DHCP_SERVERS} (from ${DHCP_SERVERS_FROM})"
 fi
 say ""
-if [ "$CONSENT_KNOWN" -eq 1 ]; then
-  say "consent   ${CONSENTED:-nothing granted}"
-else
-  say "NO CONSENT LIST: the portal did not say what this collector may read,"
-  say "  so nothing will be read. Update the portal before the appliance."
-  if [ "$CRED_FAILED" -eq 0 ]; then
-    CRED_FAILED=1
-    CRED_REASON="the portal sent no list of what this collector may read, so nothing was read"
-  fi
-fi
+settle_consent
 
 # ---------------------------------------------------------------------------
 # Recording what each capability did, so the run can be reported.
@@ -698,7 +803,13 @@ step_not_consented() {
   local needs
   needs="$(step_capability "$STEP_NAME")"
   if [ "$CONSENT_KNOWN" -ne 1 ]; then
-    say "NOT ASKED: the portal sent no consent list, so this collector reads nothing."
+    # **Not a finding about the network**, so not one of the three states.
+    # The run is reported as could-not-start with no capability list, which
+    # is what the portal has always received here; this is the screen saying
+    # the same thing rather than ten NOT ASKED lines nobody asked.
+    say "NOT RUN: ${CONSENT_UNHEARD}."
+    NOTRUN=$((NOTRUN + 1))
+    return 1
   elif [ "$needs" = UNMAPPED ]; then
     say "NOT ASKED: step ${STEP_NAME} maps to no consent capability, so it never runs."
   elif [ "$needs" = PREREQUISITE ]; then
@@ -718,7 +829,7 @@ run_capability() {
   if [ "$CONSENT_KNOWN" -ne 1 ] || ! step_permitted "$name" "$CONSENTED"; then
     fn=step_not_consented
   fi
-  local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED
+  local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED before_notrun=$NOTRUN
   local log state reason status
 
   # A qualification on an answer, set by the capability that gave it. The
@@ -745,7 +856,12 @@ run_capability() {
 
   cat "$log"
 
-  if [ "$FOUND" -gt "$before_found" ]; then
+  if [ "$NOTRUN" -gt "$before_notrun" ]; then
+    # Nothing to report about the network, and nothing is added to the
+    # capability list: the run goes up as could-not-start.
+    rm -f "$log"
+    return $status
+  elif [ "$FOUND" -gt "$before_found" ]; then
     state="reached"
     reason=""
   elif [ "$REFUSED" -gt "$before_refused" ]; then
@@ -1953,6 +2069,10 @@ rule "what this appliance can reach"
 say "found:      ${FOUND}   (including step 0, where the credential came from)"
 say "refused:    ${REFUSED}"
 say "not asked:  ${UNASKED}"
+if [ "$NOTRUN" -gt 0 ]; then
+  say "not run:    ${NOTRUN}   (this box could not hear what it may read -- nothing"
+  say "            here is about the customer's network)"
+fi
 say ""
 say "Three states, not two. A capability that was never asked -- because"
 say "something it depends on failed, or because nothing configured it -- is not"

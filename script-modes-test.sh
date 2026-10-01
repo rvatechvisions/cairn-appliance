@@ -39,9 +39,10 @@ cd "$HERE" || { printf 'FAIL: cannot enter %s\n' "$HERE"; exit 2; }
 # and asserting a mode nobody depends on is how an assertion becomes noise
 # somebody edits away.
 #
-# These four are what a person types, or what a script tells them to type:
-# three from the runbook, and enroll.sh because its own refusal prints `$0`.
-OPERATOR_RUN='bootstrap.sh enroll.sh preflight.sh set-portal.sh'
+# These five are what a person types, or what a script tells them to type:
+# four from the runbook (install-binary.sh is INSTALL-STEPS.md step 2b), and
+# enroll.sh because its own refusal prints `$0`.
+OPERATOR_RUN='bootstrap.sh enroll.sh install-binary.sh preflight.sh set-portal.sh'
 
 wrong=0
 counted=0

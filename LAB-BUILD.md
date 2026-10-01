@@ -193,6 +193,15 @@ telling you which.
 
 **Then re-run the three commands in section 4.**
 
+**A pull updates the scripts and NOT the binary.** Added 1 October 2026
+(WO-1001-D item 5), after exactly that happened on the lab box: a morning's
+pull brought scripts that expect a consent list, the binary on the box was
+from 23 September and could not hear one, and the run read the silence as the
+portal sending none. Nothing on the box builds the binary, so after a pull
+check what is installed — `preflight/preflight -version` and
+`preflight/preflight -speaks` — and if `preflight.sh` refuses it as too old,
+install the published binary by `INSTALL-STEPS.md` step 2b.
+
 **CORRECTED 24 September 2026. This said *the build is offline now*, and
 that is true of MODULES and false of the TOOLCHAIN.** `go.sum` governs
 module checksums, so with one present nothing is fetched to resolve

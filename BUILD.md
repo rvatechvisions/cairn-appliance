@@ -41,9 +41,22 @@ longer one of the answers.
 
 ---
 
-## Build on the CAIRN VM, not on the workstation
+## ~~Build on the CAIRN VM, not on the workstation~~ Build on the workstation, never on an appliance
 
-**The workstation has no Go toolchain.** That is the whole reason this document
+> **CORRECTED 1 October 2026 (WO-1001-D item 5).** This section told a person
+> to build on the lab VM, which is an appliance, and steps 1 and 2 below told
+> them to install Go there. Both were overtaken on 24 September 2026, when the
+> appliance stopped compiling and stopped holding a compiler, and neither was
+> amended where it stood. **The build machine is the workstation**, which has
+> a Go toolchain: `go vet` and `go test` ran there for this repository on
+> 1 October 2026. Steps 3 to 5 — the build and the three reads after it —
+> are what a build machine runs, from `preflight/`. Steps 1 and 2 install a
+> toolchain and were written for a Linux build host; they apply to a build
+> machine and **never to an appliance**. The appliance receives the result by
+> the install path in `INSTALL-STEPS.md` step 2b. The paragraphs
+> below this note are kept as the record of why the lab VM was used before.
+
+~~**The workstation has no Go toolchain.**~~ That is the whole reason this document
 exists: wording changes were written into `preflight/main.go` and committed
 without ever being compiled, which is a stronger version of *built, never run*
 than the finding catalogue's entry 6 — there the code had at least been
@@ -62,8 +75,9 @@ NOT THIS HOST.*
 
 ## The steps
 
-Run these on the CAIRN VM, as `azureuser`, from wherever the repository is
-checked out.
+~~Run these on the CAIRN VM, as `azureuser`, from wherever the repository is
+checked out.~~ Run these on the build machine, never on an appliance
+(corrected 1 October 2026; see the note above).
 
 ### 1. Check whether Go is already there
 
@@ -180,11 +194,14 @@ The failure it warned about is still real and now has a different cause:
 packages means `go.sum` is missing or was moved aside, not that a step was
 skipped. Restore it from the repository rather than regenerating it.
 
-These are the same two commands `preflight.sh` runs, in the same order, from the
+~~These are the same two commands `preflight.sh` runs, in the same order, from the
 same directory. **Running `preflight.sh` builds the probe too** — it always
 rebuilds, deliberately, because a run that used yesterday's binary reports on
-code it did not execute. Building by hand is for when you want the compiler's
-output on its own, without a domain read after it.
+code it did not execute.~~ **Withdrawn: `preflight.sh` has built nothing since
+24 September 2026** (corrected 1 October 2026, WO-1001-D item 5). It runs the
+binary that is installed, reports that binary's stamp and SHA-256 in its run
+report, and refuses one too old to read the consent list. Building is done
+here, on the workstation, and nowhere else.
 
 ### 4. Read the artifact rather than the exit code
 
@@ -220,6 +237,19 @@ failure in a smaller medium.
 
 **Record the three together.** The commit says what the source was, the porcelain
 says the source was only that, and the checksum names the bytes that came out.
+
+### 6. Publish it, then install it
+
+The digest from step 5 is what the portal is told when the binary is
+published, and the portal refuses a file that does not hash to it
+(`src/cli/publish-appliance-binary.ts` in the portal repository; publishing is
+Jackie's to authorise). **The published binary must answer `-speaks` with the
+consent list**, or `install-binary.sh` and `preflight.sh` both refuse it —
+so build from a commit that has the flag.
+
+Then install it on a box by `INSTALL-STEPS.md` step 2b: the person downloads
+it from the collector card, carries it, and the box checks it against the
+digest the card prints before it is put in place.
 
 ---
 

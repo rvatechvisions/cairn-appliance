@@ -47,17 +47,75 @@ sudo git clone https://github.com/rvatechvisions/cairn-appliance /opt/cairn-appl
 It is a public repository on purpose: the client can read every line of what
 you are asking them to run.
 
-## 2. Build the helper binary
+## 2. Prepare the host
 
 ```
 cd /opt/cairn-appliance
 sudo bash bootstrap.sh
 ```
 
-`bootstrap.sh` installs what the build needs and builds `preflight/preflight`.
+`bootstrap.sh` installs the packages a run needs (Kerberos, LDAP and DNS
+tools, `jq`) and creates `/etc/cairn-appliance`. **It builds nothing.** The
+appliance has had no compiler since 24 September 2026 and never obtains one;
+if `bootstrap.sh` reports a `go` on the box, that is a finding, not a
+prerequisite.
 
 **If it refuses, read the refusal and stop.** It is written to say what it
 could not do rather than to carry on with less.
+
+> **CORRECTED 1 October 2026 (WO-1001-D item 5).** This step said
+> *`bootstrap.sh` installs what the build needs and builds
+> `preflight/preflight`*. It had not built anything since 24 September, and a
+> runbook naming a step that cannot work is setup guidance invented after the
+> fact. The binary is installed by step 2b.
+
+## 2b. Install the binary the portal publishes
+
+**The portal publishes, you carry, the box verifies.** The appliance never
+compiles and never fetches executable code from anywhere but the portal; you
+carrying the portal's published file onto the box makes it fetch nothing, and
+the box checks the file against the digest the portal published before it is
+put where anything runs it.
+
+**On your own machine, signed in to the portal as staff:**
+
+1. Open the client's collector card on **Integrations**. Under *Appliances* it
+   says *The binary Cairn offers is built from …, SHA-256 …* and prints the
+   digest **whole**.
+2. Press **Download it**. The file is named `preflight-` and the first twelve
+   characters of that digest.
+3. Copy the file to the box (for example with `scp`, into `/tmp`). Leave the
+   card open: you will type the digest from it.
+
+**On the box:**
+
+```
+cd /opt/cairn-appliance
+sudo ./install-binary.sh /tmp/preflight-<first twelve> <the whole SHA-256 from the card>
+```
+
+**Read the two lines it prints, one above the other** — the digest you typed
+and the digest of the file you carried. They must be the same.
+
+- **If they match**, it says `INSTALLED`, prints what the binary now says
+  about itself and its SHA-256, and keeps the binary it replaced beside it as
+  `preflight/preflight.previous`.
+- **If they do not match, it refuses, loudly, and installs nothing.** The
+  binary already on the box is left exactly as it was, and the refusal says
+  which one that is. The file is not the one the portal published, or it was
+  damaged on the way: download it again from the card. **Do not run it, and do
+  not work around the refusal** — the comparison is the whole of what makes the
+  file trustworthy.
+
+It also refuses a matching binary too old to read the consent list the portal
+sends, because `preflight.sh` would refuse to run it.
+
+> **`-update` is the maintenance path, not the install path.** Once a box
+> runs a published binary that has it, `preflight/preflight -portal <url>
+> -update` fetches the current binary over the box's own signed channel and
+> checks it against the published digest itself. A box whose binary predates
+> `-update` cannot reach a newer one that way, which is why this step exists
+> and why it stays.
 
 ## 3. Tell the box which portal it reports to
 
@@ -197,6 +255,8 @@ credential it can no longer fetch.
 | A capability says *refused* | The client's directory said no. That is a finding, and it is the conversation to have with their administrator |
 | A capability says *not asked* | Nothing told the box to try. That is a gap in what it was told, not a failure of the box |
 | The card says *Not yet verified* after step 5 | The run did not reach the portal. The run itself still stands — what it reached printed on your screen |
+| preflight says *NOT RUN: the installed binary is too old to hear the consent list* | The binary predates the scripts. Install the published one by step 2b. Nothing was asked of the portal or the domain, and nothing about the client is implied |
+| `install-binary.sh` refuses: *THE FILE DOES NOT MATCH* | The file you carried is not the one the portal published. Download it again. The installed binary was not touched |
 
 **Nothing in this list is fixed by running it again and hoping.** Each line is
 a different thing to go and look at.

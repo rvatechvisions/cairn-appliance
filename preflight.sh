@@ -789,7 +789,7 @@ json_safe() {
 # difference would otherwise disappear.
 first_reason() {
   local log="$1" line
-  line="$(grep -m1 -E '^(REFUSED|NOT ASKED|PARTLY):' "$log" 2>/dev/null || true)"
+  line="$(grep -m1 -E '^(REFUSED|NOT ASKED|NOT RUN|PARTLY):' "$log" 2>/dev/null || true)"
   if [ -z "$line" ]; then
     printf '%s' "this run did not record a reason; read the appliance output"
     return 0
@@ -857,10 +857,12 @@ run_capability() {
   cat "$log"
 
   if [ "$NOTRUN" -gt "$before_notrun" ]; then
-    # Nothing to report about the network, and nothing is added to the
-    # capability list: the run goes up as could-not-start.
-    rm -f "$log"
-    return $status
+    # Our own software could not attempt this step. WO-1001-E item 3: it is
+    # could-not-run, never not-asked, because not-asked is a statement about
+    # what this box was told and this is a statement about this box. Where the
+    # whole run could not start, the list is not sent at all.
+    state="could-not-run"
+    reason="$(first_reason "$log")"
   elif [ "$FOUND" -gt "$before_found" ]; then
     state="reached"
     reason=""
@@ -873,8 +875,9 @@ run_capability() {
   else
     # No counter moved, which is not one of the three states and is not
     # silently folded into one. It is a defect in this script and the
-    # report says so rather than reporting a network fact nobody observed.
-    state="not-asked"
+    # report says so rather than reporting a network fact nobody observed --
+    # which is why it is could-not-run and not not-asked (WO-1001-E item 3).
+    state="could-not-run"
     reason="this capability recorded no outcome; that is a fault in preflight.sh"
   fi
 
@@ -1667,23 +1670,25 @@ capability_dhcp() {
   # something this script just wrote -- which is the honest version of the
   # same line.
   #
-  # ## A missing binary is NOT ASKED, not REFUSED
+  # ## A missing binary is COULD NOT RUN, never NOT ASKED or REFUSED
   #
   # `refused` means the domain was asked and said no; `not asked` means it
-  # was never asked. A binary that is not installed is neither a fact about
-  # the client’s network nor a gap in what this host was told -- it is a
-  # fault in the installation, and this script already routes a fault of its
-  # own to `not-asked` with a reason that names it as one. Calling it
-  # `refused` would put an installation fault in the bin that means *the
-  # network said no*, which is the one thing the triple exists to keep apart.
+  # was never asked, for a reason about what this host was told. A binary
+  # that is not installed is neither: it is a fault in our own software.
+  # Until WO-1001-D it was routed to `not-asked`, which put our fault in the
+  # customer's column; the order author's ruling of 1 October 2026
+  # (WO-1001-E item 3) is that **a capability is never recorded as not asked
+  # because of a failure in our own software**, and the word for it is the
+  # one the run level already uses, one level down: `could-not-run`.
   # ---------------------------------------------------------------------
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no DHCP probe at ${binary}."
+    say "NOT RUN: there is no DHCP probe at ${binary}; that is a fault in this installation, not in the network."
     say ""
     say "  This script no longer builds one. Nothing was asked of any DHCP"
     say "  server, and nothing about the domain, the account or the"
-    say "  credential is implicated."
-    UNASKED=$((UNASKED + 1))
+    say "  credential is implicated. Install the published binary by"
+    say "  INSTALL-STEPS.md step 2b."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
 
@@ -1703,13 +1708,13 @@ capability_dhcp() {
 
   case "$reported" in
     *unstamped*)
-      say "NOT ASKED: the installed probe carries no commit stamp."
+      say "NOT RUN: the installed probe carries no commit stamp; that is a fault in this installation, not in the network."
       say "  ${binary} -version says: ${reported}"
       say ""
       say "  A binary that cannot say which commit built it cannot be matched"
-      say "  to a review, a report or a change somebody made. Install one that"
-      say "  was built from a named commit."
-      UNASKED=$((UNASKED + 1))
+      say "  to a review, a report or a change somebody made. Install the"
+      say "  published binary by INSTALL-STEPS.md step 2b."
+      NOTRUN=$((NOTRUN + 1))
       return 1
       ;;
   esac
@@ -1861,8 +1866,8 @@ run_capability dhcp capability_dhcp || true
 capability_zabbix() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no preflight binary at ${binary}."
-    UNASKED=$((UNASKED + 1))
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
   if [ -z "${CAIRN_PORTAL:-}" ]; then
@@ -1900,8 +1905,8 @@ run_capability zabbix capability_zabbix || true
 capability_vsphere() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no preflight binary at ${binary}."
-    UNASKED=$((UNASKED + 1))
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
   if [ -z "${CAIRN_PORTAL:-}" ]; then
@@ -1940,8 +1945,8 @@ run_capability vsphere capability_vsphere || true
 capability_mecm() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no preflight binary at ${binary}."
-    UNASKED=$((UNASKED + 1))
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
   if [ -z "${CAIRN_PORTAL:-}" ]; then
@@ -1980,8 +1985,8 @@ run_capability mecm capability_mecm || true
 capability_proxmox() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no preflight binary at ${binary}."
-    UNASKED=$((UNASKED + 1))
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
   if [ -z "${CAIRN_PORTAL:-}" ]; then
@@ -2022,8 +2027,8 @@ run_capability proxmox capability_proxmox || true
 capability_relay() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
-    say "NOT ASKED: there is no preflight binary at ${binary}."
-    UNASKED=$((UNASKED + 1))
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
   if [ -z "${CAIRN_PORTAL:-}" ]; then

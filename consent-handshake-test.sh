@@ -20,8 +20,11 @@
 # - "No consent list was heard" and "the portal sent no consent list" are
 #   different sentences, and only a fetch by a binary that declared the list
 #   may produce the second.
-# - A step consent never reached is NOT RUN: it moves no network counter and
-#   adds nothing to the capability list the portal receives.
+# - A step consent never reached is NOT RUN: it moves no network counter, and
+#   it is recorded as could-not-run, never not-asked (WO-1001-E item 3). Where
+#   the whole run could not start, the list is not sent at all.
+# - A step whose binary is missing on a run that DID start is could-not-run in
+#   the list the portal receives, with the reason naming the installation.
 #
 # The binaries are stand-ins that answer -speaks the way each kind of build
 # does: the subject is the script's reading of them, not the binary.
@@ -136,12 +139,34 @@ out="$(run_capability dhcp stub_step)"; run_capability dhcp stub_step >/dev/null
 [ "$NOTRUN" -eq 1 ] && ok "an unheard consent marks the step NOT RUN" || bad "notrun=${NOTRUN}"
 [ "$UNASKED" -eq 0 ] && [ "$FOUND" -eq 0 ] && [ "$REFUSED" -eq 0 ] \
   && ok "and moves none of the three network counts" || bad "found=${FOUND} refused=${REFUSED} unasked=${UNASKED}"
-[ -z "$CAP_JSON" ] && ok "and adds nothing to the capability list the portal receives" || bad "CAP_JSON=${CAP_JSON}"
+case "$CAP_JSON" in
+  *'"state":"could-not-run"'*) ok "and is recorded as could-not-run" ;;
+  *) bad "CAP_JSON=${CAP_JSON}" ;;
+esac
+case "$CAP_JSON" in
+  *not-asked*) bad "our own software's failure recorded as not-asked: ${CAP_JSON}" ;;
+  *) ok "and never as not-asked" ;;
+esac
 case "$out" in
   *"NOT ASKED"*) bad "printed NOT ASKED for a step nobody asked: ${out}" ;;
   *"this step ran"*) bad "the step ran without consent: ${out}" ;;
   *"NOT RUN: the installed binary"*) ok "and the screen names the reason, not a verdict" ;;
   *) bad "printed: ${out}" ;;
+esac
+
+# --- a missing binary on a run that started --------------------------------
+# Consent known, the step permitted, and our binary absent: could-not-run, in
+# the list, with the reason naming the installation.
+FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 CAP_JSON=""
+CONSENT_KNOWN=1 CONSENTED="zabbix"
+eval "$(lift capability_zabbix)"
+HERE="${work}/nowhere"
+out="$(run_capability zabbix capability_zabbix)"; run_capability zabbix capability_zabbix >/dev/null
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ "$NOTRUN" -eq 1 ] && [ "$UNASKED" -eq 0 ] && ok "a missing binary is NOT RUN, not NOT ASKED" || bad "notrun=${NOTRUN} unasked=${UNASKED}"
+case "$CAP_JSON" in
+  *'"name":"zabbix","state":"could-not-run","reason":"there is no preflight binary at'*'fault in this installation'*) ok "and the portal is told could-not-run, naming the installation" ;;
+  *) bad "CAP_JSON=${CAP_JSON}" ;;
 esac
 
 # --- the order in the script, which no stub can show -----------------------

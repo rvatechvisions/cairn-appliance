@@ -77,8 +77,8 @@ fi
 # ---------------------------------------------------------------------------
 
 states="$(grep -oE 'state="[a-z-]+"' "$SCRIPT" | sed 's/state="//;s/"//' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-[ "$states" = "not-asked reached refused" ] \
-  && ok "the three states are the ones the portal parses" \
+[ "$states" = "could-not-run not-asked reached refused" ] \
+  && ok "the four states are the ones the portal parses" \
   || bad "states changed: '${states}'"
 
 outcomes="$(grep -oE '"outcome":"[a-z-]+"' "$SCRIPT" | sed 's/.*:"//;s/"//' | sort -u | tr '\n' ' ' | sed 's/ $//')"
@@ -91,7 +91,7 @@ outcomes="$(grep -oE '"outcome":"[a-z-]+"' "$SCRIPT" | sed 's/.*:"//;s/"//' | so
 # ---------------------------------------------------------------------------
 
 # LC_ALL=C so the byte class means bytes rather than whatever the locale says.
-nonascii="$(LC_ALL=C grep -nE 'say "(REFUSED|NOT ASKED|PARTLY):|CRED_REASON="|reason="' "$SCRIPT" \
+nonascii="$(LC_ALL=C grep -nE 'say "(REFUSED|NOT ASKED|NOT RUN|PARTLY):|CRED_REASON="|reason="' "$SCRIPT" \
   | LC_ALL=C grep -P '[^\x00-\x7f]' || true)"
 
 if [ -z "$nonascii" ]; then

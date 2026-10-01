@@ -17,6 +17,13 @@
 #
 # ## What it reads
 #
+# **KNOWN GAP, recorded 1 October 2026 and queued for its own order (portal
+# BACKLOG.md, under Next): this checker reports checked on text it never read.**
+# A helper that prints through say rather than printf or echo is invisible to
+# the helper detector -- refuse_install in install-binary.sh and
+# refuse_disagreement in preflight.sh are the two known -- and the extractor
+# reads only a helper's first quoted argument. Not fixed here, deliberately.
+#
 # The text these programs PRINT, not their code. A shell variable name and a Go
 # identifier are not read as English by anybody, and checking them would produce
 # noise that teaches a reader to skip the result.

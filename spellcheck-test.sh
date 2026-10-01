@@ -101,7 +101,7 @@ esac
 # opinion about one string, which is how two copies of a fact come to
 # disagree. This reads printed text; that one reads the vocabulary.
 
-EXTRACTED='say rule step echo printf'
+EXTRACTED='say rule step keep_submission_digest echo printf'
 
 printers=''
 shipped=''

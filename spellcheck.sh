@@ -21,7 +21,10 @@
 # identifier are not read as English by anybody, and checking them would produce
 # noise that teaches a reader to skip the result.
 #
-#   - `say`, `rule`, `step`, `echo` and `printf` in every tracked shell script
+#   - `say`, `rule`, `step`, `keep_submission_digest`, `echo` and `printf` in
+#     every tracked shell script. The fourth prints a server name it is
+#     handed, so its callers pass a variable and nothing is extracted today;
+#     it is listed so a literal handed to it later is read.
 #   - `fmt.Print*`, `fmt.Errorf` and `errors.New` in every tracked Go file
 #
 # **`rule` and `step` are in that list because the first version left them
@@ -107,8 +110,8 @@ while IFS= read -r file; do
   shell_files=$((shell_files + 1))
   # say/echo/printf, with the quotes, the format directives and the shell
   # expansions removed. What is left is the sentence.
-  grep -hoE '(^|[[:space:]])(say|rule|step|echo|printf)[[:space:]]+["'"'"'][^"'"'"']*' "$file" \
-    | sed -E 's/^[[:space:]]*(say|rule|step|echo|printf)[[:space:]]+["'"'"']//' \
+  grep -hoE '(^|[[:space:]])(say|rule|step|keep_submission_digest|echo|printf)[[:space:]]+["'"'"'][^"'"'"']*' "$file" \
+    | sed -E 's/^[[:space:]]*(say|rule|step|keep_submission_digest|echo|printf)[[:space:]]+["'"'"']//' \
     | sed -E 's/\$\{[^}]*\}/ /g; s/\$[A-Za-z_][A-Za-z0-9_]*/ /g' \
     | sed -E 's/%-?[0-9]*[a-zA-Z]/ /g; s/\\[nrt]/ /g' \
     >> "$OUT"

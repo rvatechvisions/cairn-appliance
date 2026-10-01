@@ -1477,6 +1477,33 @@ run_capability dhcp-authorized capability_authorized_servers || true
 # using go-msrpc, calling R_DhcpEnumSubnets and R_DhcpEnumSubnetClientsV5 --
 # both reads, and the pair the collector itself would use.
 # ---------------------------------------------------------------------------
+# **The digest of what a submission sent, kept on the box.** WO-1001-C item 3.
+#
+# The portal stores a SHA-256 of each submission body as it arrived and never
+# the body: R20 keeps lease lists on district equipment, and a portal holding
+# raw bodies to audit itself would hold the thing it promised not to. So the
+# evidence that what arrived is what was sent is two digests compared, and the
+# box's half has to survive until somebody reads it. A run's screen does not --
+# a hand run prints to a terminal, and a timed run to a journal whose retention
+# this script does not set -- so the binary's digest line is appended here,
+# with the time and the server, to a file of its own. Nothing in this
+# repository configures rotation for it; whether the box's own logrotate
+# configuration reaches /var/log/cairn-appliance has not been read from the
+# box, and it is the first thing to check if this file is ever found short.
+SUBMISSIONS_LOG="${SUBMISSIONS_LOG:-/var/log/cairn-appliance/submissions.log}"
+keep_submission_digest() {
+  local server="$1" output="$2" line
+  if ! line="$(grep -m 1 'body SHA-256' "$output")"; then
+    say "  SUBMISSION DIGEST NOT KEPT: the binary printed none for ${server}."
+    return 0
+  fi
+  if mkdir -p "$(dirname "$SUBMISSIONS_LOG")" && printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$server" "$line" >>"$SUBMISSIONS_LOG"; then
+    say "  kept: ${line}, in ${SUBMISSIONS_LOG}"
+  else
+    say "  SUBMISSION DIGEST NOT KEPT: ${SUBMISSIONS_LOG} could not be written."
+  fi
+}
+
 rule "5. DHCP over MS-DHCPM"
 capability_dhcp() {
   if [ "$KERBEROS_OK" -ne 0 ]; then
@@ -1628,6 +1655,20 @@ capability_dhcp() {
   fi
   local submitted=0 asked=0
 
+  # One read of one server: its output shown exactly as before, and, when
+  # submitting, the digest line kept. The status is the binary's own.
+  dhcp_read() {
+    local output status=0
+    output="$(mktemp)"
+    CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" "${mode_args[@]}" "$1" "${probe_args[@]}" >"$output" 2>&1 || status=$?
+    sed 's/^/  /' "$output"
+    if [ "$submit" -eq 1 ]; then
+      keep_submission_digest "$1" "$output"
+    fi
+    rm -f "$output"
+    return "$status"
+  }
+
   local IFS=,
   for server in $DHCP_SERVERS; do
     server="$(printf '%s' "$server" | tr -d ' ')"
@@ -1656,7 +1697,7 @@ capability_dhcp() {
     # ticket it needs lives in a tmpfs cache this script deletes on exit --
     # so by the time somebody has a shell to run it from, the credential is
     # gone. A diagnostic flag nobody can reach is a flag that does not exist.
-    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" "${mode_args[@]}" "$server" "${probe_args[@]}" 2>&1 | sed 's/^/  /'; then
+    if dhcp_read "$server"; then
       any_found=1
       if [ "$submit" -eq 1 ]; then
         submitted=$((submitted + 1))

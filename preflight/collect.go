@@ -324,9 +324,21 @@ func collectDHCP(ctx context.Context, server, transport, targetName string, debu
 	if err != nil {
 		return err
 	}
+	// The bytes about to be signed and sent, by size and SHA-256, printed BEFORE
+	// the send so a refused submission can be compared too. The portal stores
+	// the same digest over the body as it arrived, and never the body itself --
+	// so this line, kept on the box, is the other half of the only comparison
+	// there is. WO-1001-C item 3.
+	fmt.Println(submissionLine(body))
 	if err := signedPost(portal, collectionPath, "application/json", fingerprint, private, body); err != nil {
 		return err
 	}
 	fmt.Println("submitted")
 	return nil
+}
+
+// submissionLine names a submission's body by size and SHA-256, in the form the
+// script keeps beside the box.
+func submissionLine(body []byte) string {
+	return fmt.Sprintf("sending %d bytes, body SHA-256 %s", len(body), digestOf(body))
 }

@@ -46,6 +46,7 @@ lift() {
   fi
   printf '%s\n' "$body"
 }
+eval "$(lift keep_submission_digest)"
 eval "$(lift capability_dhcp)"
 say() { printf '%s\n' "$*"; }
 
@@ -58,9 +59,11 @@ cat >"${work}/preflight/preflight" <<STUB
 if [ "\${1:-}" = "-version" ]; then echo "preflight 2026.10.01 0000000000000000000000000000000000000000"; exit 0; fi
 printf '%s\n' "\$*" >>"${calls}"
 echo "read 2 scopes"
+case "\$*" in *-collect-dhcp*) echo "sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; echo submitted ;; esac
 STUB
 chmod +x "${work}/preflight/preflight"
 
+SUBMISSIONS_LOG="${work}/submissions.log"
 run_step() {
   HERE="$work" KERBEROS_OK=0 PRINCIPAL="svc@LAB.EXAMPLE" DHCP_SERVERS="dhcp01.lab.example"
   FOUND=0 REFUSED=0 UNASKED=0 CAP_NOTE=""
@@ -77,12 +80,15 @@ grep -q -- '-collect-dhcp' "$calls" && bad "the probe run submitted" || ok "noth
 case "$CAP_NOTE" in *"nothing was submitted"*) ok "the note says nothing was submitted" ;; *) bad "note: $CAP_NOTE" ;; esac
 case "$OUT" in *"NOT SUBMITTED"*) ok "the screen says nothing was submitted" ;; *) bad "printed: $OUT" ;; esac
 [ "$FOUND" -eq 1 ] && ok "the probe still answers the capability" || bad "found: $FOUND"
+[ ! -s "$SUBMISSIONS_LOG" ] && ok "a probe keeps no submission digest" || bad "kept: $(cat "$SUBMISSIONS_LOG")"
 
 # Submitting.
 CAIRN_DHCP_SUBMIT=yes
 run_step
 [ "$(head -n 1 "$calls")" = "-portal https://portal.example -collect-dhcp -server dhcp01.lab.example" ] && ok "with the setting, collect mode is called against the portal named" || bad "called: $(cat "$calls")"
 [ "$CAP_NOTE" = "submitted to the portal from 1 of 1 DHCP server(s)" ] && ok "the note counts what was submitted" || bad "note: $CAP_NOTE"
+grep -Eq "^[0-9T:Z-]+ dhcp01\.lab\.example sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\$" "$SUBMISSIONS_LOG" && ok "the submission digest is kept on the box, with the time and the server" || bad "kept: $(cat "$SUBMISSIONS_LOG" 2>&1)"
+type keep_submission_digest >/dev/null 2>&1 && ok "the digest keeper was lifted, so its absence would fail here" || bad "keep_submission_digest is not defined"
 
 # Submitting, and no portal named.
 CAIRN_PORTAL=""

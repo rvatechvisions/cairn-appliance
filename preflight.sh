@@ -721,6 +721,11 @@ run_capability() {
   local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED
   local log state reason status
 
+  # A qualification on an answer, set by the capability that gave it. The
+  # portal stores it as the capability's note: a note qualifies a capability
+  # that answered, and a reason belongs to one that did not. WO-1001-A item 1.
+  CAP_NOTE=""
+
   log="$(mktemp)"
 
   # **A line before the silence, because the silence is new.**
@@ -762,6 +767,8 @@ run_capability() {
   local entry
   if [ -n "$reason" ]; then
     entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"reason\":\"$(json_safe "$reason")\"}"
+  elif [ "$state" = "reached" ] && [ -n "$CAP_NOTE" ]; then
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"note\":\"$(json_safe "$CAP_NOTE")\"}"
   else
     entry="{\"name\":\"${name}\",\"state\":\"${state}\"}"
   fi
@@ -1592,13 +1599,47 @@ capability_dhcp() {
     probe_args=($CAIRN_PROBE_ARGS)
   fi
 
+  # **Submit, or say plainly that nothing was submitted.** WO-1001-A item 1.
+  #
+  # Until 1 October 2026 this step called the binary with -server alone: the
+  # PROBE, which reads every scope and prints what it found on this box and
+  # sends the portal nothing. -collect-dhcp, the mode that submits, was called
+  # from nowhere -- so a box reported DHCP as reached every night and no
+  # reading could ever have arrived, whatever binary it ran. Every other
+  # reader was called in its collect mode; this one was the odd one out, and
+  # its output looked exactly like work.
+  #
+  # **Submitting is held behind CAIRN_DHCP_SUBMIT=yes in settings.env**, set on
+  # the lab box only, by the staging the order author set: the first
+  # submission is from our own box, what crossed the boundary is read field by
+  # field, and no client box submits until that has been read and said. A box
+  # without it stays on the probe, and its run report says so in the note, so
+  # a probe can no longer read as a delivery.
+  local submit=0
+  local -a mode_args=(-server)
+  if [ "${CAIRN_DHCP_SUBMIT:-}" = "yes" ]; then
+    if [ -z "${CAIRN_PORTAL:-}" ]; then
+      say "NOT ASKED: CAIRN_DHCP_SUBMIT is yes, and no portal is named to submit to."
+      UNASKED=$((UNASKED + 1))
+      return 1
+    fi
+    submit=1
+    mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
+  fi
+  local submitted=0 asked=0
+
   local IFS=,
   for server in $DHCP_SERVERS; do
     server="$(printf '%s' "$server" | tr -d ' ')"
     [ -z "$server" ] && continue
+    asked=$((asked + 1))
 
     say ""
-    say "asking ${server}:"
+    if [ "$submit" -eq 1 ]; then
+      say "reading ${server} and submitting to the portal:"
+    else
+      say "asking ${server} (the probe: printed here, nothing is submitted):"
+    fi
     # CAIRN_PRINCIPAL is passed explicitly rather than exported globally.
     #
     # settings.env is read with `.`, which makes its names shell variables and
@@ -1615,8 +1656,11 @@ capability_dhcp() {
     # ticket it needs lives in a tmpfs cache this script deletes on exit --
     # so by the time somebody has a shell to run it from, the credential is
     # gone. A diagnostic flag nobody can reach is a flag that does not exist.
-    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" -server "$server" "${probe_args[@]}" 2>&1 | sed 's/^/  /'; then
+    if CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" "${mode_args[@]}" "$server" "${probe_args[@]}" 2>&1 | sed 's/^/  /'; then
       any_found=1
+      if [ "$submit" -eq 1 ]; then
+        submitted=$((submitted + 1))
+      fi
     else
       # "Refused" rather than "did not answer", because they are different
       # facts and this script spends its whole output insisting on that.
@@ -1628,6 +1672,14 @@ capability_dhcp() {
       say "  this server refused. The others are still being asked."
     fi
   done
+
+  if [ "$submit" -eq 1 ]; then
+    CAP_NOTE="submitted to the portal from ${submitted} of ${asked} DHCP server(s)"
+  else
+    CAP_NOTE="probed on this box only; nothing was submitted, because CAIRN_DHCP_SUBMIT is not yes"
+    say ""
+    say "NOT SUBMITTED: this box is held on the probe. What was read above stays on this box."
+  fi
 
   if [ "$any_found" -eq 1 ]; then
     FOUND=$((FOUND + 1))

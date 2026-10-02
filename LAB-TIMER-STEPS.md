@@ -26,7 +26,7 @@
 | | |
 | --- | --- |
 | **Not a client box.** | Not a client’s network, not anywhere. The client install is a different document and it waits on this one |
-| **Do not touch the enrolled key.** | No `enroll.sh`, no regenerating, no revoking. The binding this box already has is what makes the test meaningful — a fresh key would test enrolment instead |
+| **Do not touch the enrolled key.** | No `-enroll`, no `enroll.sh`, no regenerating, no revoking. The binding this box already has is what makes the test meaningful — a fresh key would test enrolment instead |
 | **Do not edit `preflight.sh`.** | If the run is wrong, that is the finding |
 
 ---
@@ -68,8 +68,25 @@ systemctl cat cairn-preflight.service
 `Environment=CAIRN_INTERVAL_MINUTES=1440` and
 `ExecStart=/opt/cairn-appliance/preflight.sh`.
 
-**Read that ExecStart line.** It is the same path you run by hand, deliberately
-— what you have been testing is what the timer will run.
+~~**Read that ExecStart line.** It is the same path you run by hand,
+deliberately — what you have been testing is what the timer will run.~~
+**Corrected 2 October 2026: check it, do not read it.** Reading the line
+confirms what the unit says, not that the path exists — and a timer does not
+resolve its `ExecStart` until it fires, so a wrong path arms cleanly here and
+fails at five in the morning with nobody watching. On this box it was wrong:
+the repository was under `/root` until it was moved on 23 September 2026.
+
+```
+grep '^ExecStart=' /etc/systemd/system/cairn-preflight.service
+test -x /opt/cairn-appliance/preflight.sh && echo present || echo MISSING
+pwd
+```
+
+**Expect:** `ExecStart=/opt/cairn-appliance/preflight.sh`, then `present`, then
+`/opt/cairn-appliance` — the directory step 1 pulled into, which is the copy
+you run by hand. **If it says `MISSING`, or `pwd` is anywhere else, stop**: the
+timer would run a path that is not the one you have been testing. The fix is
+to move the repository to `/opt/cairn-appliance`, not to edit the unit.
 
 **If `CAIRN_INTERVAL_MINUTES` and the `OnCalendar` disagree**, stop. They are
 two halves of one fact, and a timer running weekly while the service declares
@@ -168,6 +185,7 @@ you if the next one does not arrive*.
 | 1 | Pull refuses | The box has local edits. A finding about the box, not the code |
 | 2 | `daemon-reload` errors | A unit file is malformed. **Mine** |
 | 3 | The two intervals disagree | I shipped two halves of one fact that do not match. **Mine** |
+| 3 | `MISSING`, or `pwd` is not `/opt/cairn-appliance` | The unit names a path the box does not hold, or you have been testing a different copy. Move the repository; do not edit the unit |
 | 4 | Will not enable | Unit metadata is wrong. **Mine** |
 | 5 | No NEXT, or no row | The timer is not armed. Nothing runs overnight |
 | 6 | Card claims a schedule already | The portal is asserting something nobody told it. **Mine, and the worst of these** |

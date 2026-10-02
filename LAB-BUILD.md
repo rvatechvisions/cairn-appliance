@@ -132,9 +132,15 @@ it gives says nothing about clocks.
 
 ```bash
 apt-get update && apt-get install -y git
-git clone https://github.com/rvatechvisions/cairn-appliance.git
-cd cairn-appliance
+git clone https://github.com/rvatechvisions/cairn-appliance.git /opt/cairn-appliance
+cd /opt/cairn-appliance
 ```
+
+**`/opt/cairn-appliance`, and nowhere else.** That is the path the timer's
+unit runs (`ExecStart=/opt/cairn-appliance/preflight.sh`), so a clone anywhere
+else is one the timer cannot find. This said to clone into the current
+directory, which put RVA's own appliance's repository under `/root` until it
+was moved on 23 September 2026.
 
 That is the whole step. Skip to section 2 unless the VM has no route to the
 internet.
@@ -154,7 +160,7 @@ rather than choosing between them, which is correct and is why there are
 commands here instead of one.
 
 ```bash
-cd ~/cairn-appliance
+cd /opt/cairn-appliance
 
 # 1. What is there now. Read this before and after, because a command that
 #    silently does nothing looks exactly like one that worked.
@@ -182,7 +188,9 @@ rm -f preflight-5c3273b
 #    argument rests on.
 git pull --ff-only
 
-# 6. Read it back. The commit should have moved and the tree should be clean.
+# 6. Read it back. The commit should have moved and the tree should be clean,
+#    except for preflight/preflight.previous if INSTALL-STEPS.md step 2b has
+#    replaced a binary here: it is kept on purpose and is not ignored.
 git --no-pager status --short
 git --no-pager log -1 --format='%h %s'
 ```
@@ -275,8 +283,8 @@ corrupt one.
 
 ```bash
 sha256sum /tmp/cairn-appliance.tgz
-mkdir -p ~/cairn-appliance && tar -xzf /tmp/cairn-appliance.tgz -C ~/cairn-appliance
-cd ~/cairn-appliance
+mkdir -p /opt/cairn-appliance && tar -xzf /tmp/cairn-appliance.tgz -C /opt/cairn-appliance
+cd /opt/cairn-appliance
 ```
 
 **Check the two hashes match before going on.** A truncated copy extracts
@@ -380,19 +388,22 @@ appliance, and it matters to whoever audits the directory in six months.
 
 ---
 
-## 3 — the credential, and what is not built
+## 3 — the credential, and the two paths
 
 The design: the customer enters the credential **into the portal**, the
 appliance connects **out** and fetches it per run, `kinit`s into a
 **memory-backed** cache, and drops it. Nothing durable on the box. Revocation
 is one action in the portal.
 
-**The portal half does not exist yet** — there is no page to enter a credential
-into and no endpoint to fetch it from. Saying so plainly matters: a guide that
-told you to enter it in the portal would have you hunting for a screen that is
-not there.
+~~**The portal half does not exist yet** — there is no page to enter a
+credential into and no endpoint to fetch it from.~~ **Corrected 2 October
+2026: it exists.** Enrollment has been live since v4.47 on 21 September 2026,
+and an enrolled box fetches its credential from the portal on every run. How a
+box enrolls is `INSTALL-STEPS.md` steps 3 and 4: `set-portal.sh`, then a
+registration key from the collector card redeemed with `preflight/preflight
+-portal <url> -enroll`.
 
-**Preflight needs none of it.** It collects nothing, and on the lab path —
+**The lab path needs none of it.** It collects nothing, and on the lab path —
 a box with no appliance key, or one that was never told a portal — it
 **asks for the password itself** when you run it, with no variable to set
 up first and nothing sent anywhere.
@@ -410,16 +421,18 @@ is removed when the run ends — so the *durability* property is genuinely
 tested. What is **not** tested
 is the round trip, and what is **not** acceptable is doing this at a customer.
 
-### What Cairn needs from you for this run: nothing
+### What Cairn needs from you for a lab run: nothing
 
-No connection to create, no token to issue, no organization to set up.
-Preflight makes no outbound call beyond RVA's own domain controllers.
+No connection to create, no token to issue, no organization to set up. On the
+lab path — no appliance key, or no portal named — preflight makes no outbound
+call beyond RVA's own domain controllers.
 
-**Cairn becomes involved at the next step, not this one** — when the appliance
-submits. That needs a `collector` connection on RVA Tech Visions and a token,
-which is the mechanism the existing DHCP collector already uses at a live
-district, plus the credential path above. Both are work, and neither blocks the
-run below.
+~~**Cairn becomes involved at the next step, not this one** — when the
+appliance submits. That needs a `collector` connection on RVA Tech Visions and
+a token.~~ **Corrected 2 October 2026.** An enrolled box needs a collector
+card in Cairn to generate its registration key, and no token: it signs every
+request with the key generated at enrollment, fetches its credential, and posts
+what each run reached. That is the path RVA's own appliance is on.
 
 ---
 
@@ -432,8 +445,10 @@ already root.
 ./bootstrap.sh
 ```
 
-Installs `krb5-user`, `ldap-utils`, Go and `jq`; creates `/etc/cairn-appliance`
-at mode 700; writes a settings template; prints this host's resolvers and
+Installs `krb5-user`, `ldap-utils`, `libsasl2-modules-gssapi-mit`,
+`dnsutils`, `ca-certificates`, `curl` and `jq` — **no compiler**, and a `go`
+already on the box is reported as unexpected (it installed Go until
+24 September 2026); creates `/etc/cairn-appliance` at mode 700; writes a settings template; prints this host's resolvers and
 interfaces. **It contacts no domain.** It is idempotent, and a failing step
 does not stop the ones after it — read the summary at the end rather than the
 first error.
@@ -471,13 +486,17 @@ on a first run.
 `CAIRN_DHCP_SERVERS` takes a comma-separated list. If RVA runs DHCP on more
 than one server, name them all — each is asked and answered separately.
 
-```bash
-./enroll.sh
-```
-
-Generates this appliance's keypair and prints the public half. The private half
-never leaves the box. Since the portal side does not exist, it says so rather
-than implying it registered.
+~~`./enroll.sh` — generates this appliance's keypair; since the portal side
+does not exist, it says so.~~ **Corrected 2 October 2026: there is no
+enrollment step on the lab path.** A box with no appliance key is the lab path
+— preflight prints `not enrolled: no appliance key. Run enroll.sh to generate
+one.` and prompts; the second sentence of that line is out of date and is
+not an instruction to follow — and
+`enroll.sh` redeems nothing anyway: it only generates a keypair, and its
+closing lines still say the portal side is not built, which stopped being true
+with v4.47 on 21 September 2026. To enroll a box instead, follow
+`INSTALL-STEPS.md` steps 3 and 4, which use `preflight/preflight -portal <url>
+-enroll`; the binary generates the key itself.
 
 ```bash
 ./preflight.sh
@@ -496,8 +515,10 @@ refuses to start if it finds one there.
 
 `CAIRN_PASSWORD` is **the lab path and is named as such in the script**. The
 production path is the portal: the appliance authenticates with the key
-`enroll.sh` generated, fetches the credential per run, and holds it in memory.
-`CAIRN_PORTAL` stays empty until that side is built.
+generated at enrollment, fetches the credential per run, and holds it in memory.
+~~`CAIRN_PORTAL` stays empty until that side is built.~~ That side is built;
+`CAIRN_PORTAL` is set by `set-portal.sh` when a box is enrolled, and left
+empty for a lab run.
 
 ---
 
@@ -508,18 +529,24 @@ Six things, asked separately, each answered in **three** states: **found**,
 means something a check depended on did not happen, or nothing configured it,
 and telling it apart from a refusal is the whole point.
 
+**A fourth, `NOT RUN`, is about this box rather than the domain**: a step its
+own software could not run — no binary, or one too old to hear the consent
+list. The summary counts it as `not run`, never as refused or not asked, and
+the remedy is the published binary by `INSTALL-STEPS.md` step 2b.
+
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| `no keytab, no stored password` | Nothing durable on the box, which is the design's central claim | Nothing. This is the good outcome |
+| `no keytab, and no password in the places this looked:` | Nothing durable on the box, which is the design's central claim — in the places it names | Nothing. This is the good outcome |
 | `REFUSING TO CONTINUE. A durable credential is on this appliance` | A keytab or a stored password was found | Remove it. If it was a password, treat it as disclosed |
-| `not enrolled: no appliance key` | `enroll.sh` has not been run | Run it |
-| `CREDENTIAL SOURCE: this operator's shell` | Expected for this run | Nothing — but never at a customer |
+| `not enrolled: no appliance key. Run enroll.sh to generate one.` | The box has not enrolled, so this is the lab path. The second sentence is out of date | Nothing, for a lab run. To enroll, `INSTALL-STEPS.md` steps 3 and 4 — not `enroll.sh` |
+| `CREDENTIAL SOURCE: this operator's terminal, for this run only.` | Expected for this run | Nothing — but never at a customer |
+| `NOT RUN:` | This box's own software could not run the step | Install the published binary by `INSTALL-STEPS.md` step 2b. Not evidence about the domain |
 | `FOUND: a ticket was issued` | **Step 1 passed.** Kerberos works from an unjoined Linux host against a real domain | This is the first real result of the exercise |
 | `REFUSED: no ticket` | Wrong password, realm not upper case, or a clock more than five minutes out | Check the realm's case first — it is usually that |
 | `FOUND: the directory answered a bound read` | **Step 2 passed.** The account can read AD over LDAP | — |
 | `FOUND: N zone(s) readable` | **Step 3 passed.** DNS is directory-integrated and readable | Check N against what RVA actually has |
 | `NOT PRESENT: no directory-integrated DNS` | A normal state at some sites, not a failure | If RVA's DNS *is* AD-integrated and this says otherwise, that is a finding worth keeping |
-| `FOUND: the container answered` | **Step 4 passed.** The authorised-server list is readable. Needs only an authenticated user | Compare the list against the DHCP servers you believe exist |
+| `FOUND: N entr(ies) under the container` | **Step 4 passed.** The authorised-server list is readable. Needs only an authenticated user | Compare the list against the DHCP servers you believe exist |
 | `bound: MS-DHCPM on <dc>` then scopes | **Step 5 passed.** This is the answer the whole exercise was about | Read the scope list and the lease counts against what you know is there |
 | `REFUSED by <server>` | Almost always: the account is not in `DHCP Users` | Re-run the verification in section 2 |
 | `NOT ASKED` | Something it depends on failed, or nothing configured it | Fix what it names. It is not evidence about the domain |

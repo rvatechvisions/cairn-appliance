@@ -169,8 +169,11 @@ checking it is worth.
 
 ### The appliance authenticates with a keypair, not a bearer token
 
-Generated on this box at enrolment by `enroll.sh`. The public half is
-registered with the portal; **the private half is never transmitted.**
+Generated on this box at enrollment — by the binary, `preflight/preflight
+-portal <url> -enroll`, which creates `/etc/cairn-appliance/appliance.key`
+when none exists (or uses the one `enroll.sh` made, if that was run). The
+public half is registered with the portal; **the private half is never
+transmitted.**
 
 The reasoning is about copies rather than about consequences. A bearer token
 exists in at least two places — the portal minted it, it travelled in a
@@ -339,17 +342,17 @@ not root.
 ./bootstrap.sh
 ```
 
-Installs `krb5-user`, `ldap-utils`, Go and `jq`; creates `/etc/cairn-appliance`
-mode 700; writes a settings template; and prints the host's resolvers and
-interfaces so you can see whether it is shaped the way the table above
-requires.
+Installs `krb5-user`, `ldap-utils`, `libsasl2-modules-gssapi-mit`,
+`dnsutils`, `ca-certificates`, `curl` and `jq` — **and no compiler**: it
+installed Go until 24 September 2026, and now reports a `go` it finds on the
+box as unexpected. It creates `/etc/cairn-appliance` mode 700; writes a
+settings template; and prints the host's resolvers and interfaces so you can
+see whether it is shaped the way the table above requires.
 
 **It is idempotent and no step aborts the run.** Run it twice and the second
 run changes nothing. A step that fails does not stop the ones after it, and the
-summary at the end names each failure — a host with no Go in its repositories
-should still end up with Kerberos and LDAP working, and you should be told
-exactly which piece is missing rather than being left with a half-prepared
-machine.
+summary at the end names each failure, so you are told exactly which piece is
+missing rather than being left with a half-prepared machine.
 
 **`settings.env` does not ship in this repository**, so it will not be in a
 clone. `bootstrap.sh` writes it and leaves an existing one alone. It is absent
@@ -358,14 +361,23 @@ account, and a template carried here is the file somebody eventually fills in
 and commits.
 
 Then fill in `/etc/cairn-appliance/settings.env` — realm in **upper case**,
-host names in lower — and give this appliance its identity:
+host names in lower — and, to give this appliance its identity, tell it the
+portal and redeem a registration key generated on the collector card:
 
 ```
-./enroll.sh
+./set-portal.sh https://portal.rvatechvisions.com
+preflight/preflight -portal https://portal.rvatechvisions.com -enroll
 ```
 
-It generates the keypair here and prints the public half. **The portal side of
-enrolment is not built**, so it says so rather than implying it registered.
+The binary prompts `registration key (not shown):`, generates the keypair
+here if there is none, sends the public half, and prints `fingerprint: …` for
+you to compare against the connection card. `INSTALL-STEPS.md` step 4 has the
+whole of it. **Enrollment has been live since v4.47, 21 September 2026**; this
+section said the portal side was not built, and that `./enroll.sh` was the
+step, until 2 October 2026. `enroll.sh` only generates a keypair and redeems
+nothing, and the binary makes the key itself, so it is not needed. Skip
+enrollment entirely for the lab path below: a box with no key never contacts
+the portal.
 
 ```
 ./preflight.sh
@@ -382,9 +394,10 @@ in the shell's environment, where an exported variable would stay readable from
 already set, for an unattended run; with neither a terminal nor the variable,
 preflight refuses rather than waiting for input nobody can supply.
 
-This is the **lab** path throughout. In production the appliance authenticates
-with the key `enroll.sh` generated, fetches the credential from the portal per
-run, and holds it in memory. There is deliberately no password in
+The prompt is the **lab** path, taken only by a box that is not enrolled or
+was not told a portal. An enrolled box authenticates with the key generated at
+enrollment, fetches the credential from the portal per run, holds it in memory,
+and prompts for nothing. There is deliberately no password in
 `settings.env` — preflight refuses to start if it finds one there.
 
 ---
@@ -424,6 +437,13 @@ because something it depends on failed, or because nothing configured it — is
 not a capability that was tried and refused, and only one of those is evidence
 about the customer's network. Collapsing them is how a missing setting gets
 reported as a broken domain.
+
+**And a fourth, which is about this box rather than the customer: not run.** A
+step this box's own software could not run — no binary, or one too old to hear
+the consent list — prints `NOT RUN:` and is counted as `not run` in the
+summary, and the run report records it as `could-not-run`. It is never
+recorded as refused or not asked, because both of those are statements about
+what the customer's systems were asked.
 
 ### It reports what it found and never asserts an expected count
 
@@ -473,15 +493,21 @@ that off the account rather than taking our word for it.
 
 ---
 
-## The DHCP probe has never been compiled
+## ~~The DHCP probe has never been compiled~~ The DHCP probe is compiled, and never on an appliance
 
-`preflight/main.go` was written on a workstation with no Go toolchain. The
-module path is the one specified; **every symbol below it is unread** — the
-sub-package, the client constructor, the request and response types, and the
-fields the results are read out of.
+> **CORRECTED 2 October 2026.** This heading and the paragraph under it said
+> the probe had never been compiled and that every symbol below the module
+> path was unread. The notice at the top of `preflight/main.go` says otherwise:
+> *first built on 20 September 2026*, with the sub-package, the version suffix
+> and the client constructor corrected against the module's own source — and
+> the table at the top of this file records the probe enumerating a scope that
+> day. The paragraphs below are kept for the build rule they carry.
+
+~~`preflight/main.go` was written on a workstation with no Go toolchain. The
+module path is the one specified; **every symbol below it is unread**.~~
 
 The design is two documented MS-DHCPM reads over Kerberos and that part is
-sound. The **identifiers** are the part to distrust, and a compiler settles
+sound. The **identifiers** were the part to distrust, and a compiler settled
 them — **somewhere other than an appliance.**
 
 **This used to print the build command here, and that is withdrawn.** As of

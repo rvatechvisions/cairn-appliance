@@ -26,11 +26,19 @@ set `CAIRN_PASSWORD` yourself, or it does not survive into the elevated
 environment.
 
 ```
-./bootstrap.sh                             # installs, creates /etc/cairn-appliance (700)
+cd /opt/cairn-appliance                    # where the timer's unit runs it from
+./bootstrap.sh                             # installs (no compiler), creates /etc/cairn-appliance (700)
 vi /etc/cairn-appliance/settings.env       # realm UPPER CASE, hosts lower
-./enroll.sh                                # keypair generated here, never transmitted
-./preflight.sh                             # prompts for the password itself
+./preflight.sh                             # not enrolled: prompts for the password itself
 ```
+
+**That is the lab path, and it has no enrollment step.** ~~`./enroll.sh` —
+keypair generated here~~ was on this list until 2 October 2026; it redeems
+nothing. To enroll a box, follow `INSTALL-STEPS.md` steps 3 and 4:
+`./set-portal.sh <url>`, then `preflight/preflight -portal <url> -enroll`,
+which prompts `registration key (not shown):`, generates the keypair here if
+there is none, and prints `fingerprint: …` to compare against the connection
+card. An enrolled box fetches its credential and prompts for nothing.
 
 **Preflight asks for the password.** There is no variable to arrange first and
 nothing to paste. `CAIRN_PASSWORD` is still read if it is already set, for an
@@ -41,18 +49,20 @@ than waiting for input nobody can supply.
 
 | Line | Means |
 | --- | --- |
-| `no keytab, no stored password` | Nothing durable on the box. **The good outcome** |
+| `no keytab, and no password in the places this looked:` | Nothing durable on the box, in the places it names. **The good outcome** |
 | `REFUSING TO CONTINUE. A durable credential is on this appliance` | A keytab or stored password was found. Remove it; if a password, treat it as disclosed |
-| `not enrolled: no appliance key` | Run `enroll.sh` |
-| `CREDENTIAL SOURCE: this operator's shell` | The lab path, working as intended. **Never at a customer** |
-| `CREDENTIAL SOURCE: the portal` | The real path. The portal half is not built, so step 1 will report it had none |
+| `not enrolled: no appliance key. Run enroll.sh to generate one.` | The lab path. The second sentence is out of date: to enroll, `INSTALL-STEPS.md` steps 3 and 4, not `enroll.sh` |
+| `CREDENTIAL SOURCE: this operator's terminal, for this run only.` | The lab path, working as intended. **Never at a customer** |
+| `CREDENTIAL SOURCE: the portal, fetched for this run.` | The real path: an enrolled box, credential fetched from the portal. Live since v4.47, 21 September 2026 |
+| `REFUSED: enrolled, and the portal would not hand over a credential.` | The portal's reason is on stderr above it. Usually a revoked appliance, a clock more than five minutes out, or no credential saved on the connection yet |
+| `NOT RUN:` | This box's own software could not run the step — no binary, or one too old to hear the consent list. **Not evidence about the domain.** Install the published binary by `INSTALL-STEPS.md` step 2b |
 | `FOUND: a ticket was issued` | Kerberos works from an unjoined host, from a memory-backed cache |
 | `REFUSED: no ticket` | Password, realm case, or a clock more than five minutes out |
 | `FOUND: the directory answered` | The account can read AD |
 | `REFUSED` on LDAP | The bind or the read failed. The reason is printed above the line |
 | `FOUND: N zone(s)` | DNS is directory-integrated and readable |
 | `NOT PRESENT` on DNS | The site's DNS is not AD-integrated. **A normal state, not a failure** |
-| `FOUND: the container answered` | The authorised-server list is readable. Needs only an authenticated user |
+| `FOUND: N entr(ies) under the container` | The authorised-server list is readable. Needs only an authenticated user |
 | `bound: MS-DHCPM` then scopes | DHCP works. The account is in DHCP Users |
 | `REFUSED by <server>` with `ERROR_ACCESS_DENIED` | **The server answered.** Mapper, bind, Kerberos and dispatch all worked — see below |
 | `NOT ASKED` | Something it depends on failed, or nothing configured it. **Not the same as refused** |
@@ -135,7 +145,8 @@ missing a DHCP server or a zone. It cannot know. It prints what answered.
 and no part of the directory leaves the host.
 
 **An enrolled box does send one thing, at the end: which capabilities
-answered.** Each one by name, in one of three states, with a reason where
+answered.** Each one by name, in one of its states (reached, refused, not
+asked, or could not run when this box's own software could not), with a reason where
 it did not answer — to the portal, and nowhere else. A box that is not
 enrolled, or has not been told a portal, sends nothing and says so.
 

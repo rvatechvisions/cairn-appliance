@@ -25,6 +25,7 @@ after it has stopped being true.
 | | |
 | --- | --- |
 | A Linux VM on the client's network | Debian or Ubuntu. Two cores and 2 GB is plenty |
+| `git` and `sudo` on that VM | Step 1 clones with `git`, and every step below is written with `sudo`. A minimal Debian or Ubuntu image ships neither: as root, `apt-get update && apt-get install -y git sudo` first, or run each step as root without the `sudo` |
 | Reachability | It must reach the client's domain controllers, and it must reach the portal over https |
 | A service account in the client's directory | Read-only. **You never see the password** — see below |
 | A registration key | Generated in the portal, on the client's collector card, **when you are already at the box** |
@@ -63,6 +64,13 @@ prerequisite.
 **If it refuses, read the refusal and stop.** It is written to say what it
 could not do rather than to carry on with less.
 
+**Its closing *Next, in order* list is out of date: follow this document
+instead.** It says to fill in `settings.env` and to run `./enroll.sh`. The
+portal URL goes into `settings.env` by step 3; the domain, the controller and
+the account come from the portal on every run, and `preflight.sh` refuses a
+value left in `settings.env` that disagrees with the portal's. `enroll.sh` is
+not part of this install at all — see step 4.
+
 > **CORRECTED 1 October 2026 (WO-1001-D item 5).** This step said
 > *`bootstrap.sh` installs what the build needs and builds
 > `preflight/preflight`*. It had not built anything since 24 September, and a
@@ -99,7 +107,11 @@ and the digest of the file you carried. They must be the same.
 
 - **If they match**, it says `INSTALLED`, prints what the binary now says
   about itself and its SHA-256, and keeps the binary it replaced beside it as
-  `preflight/preflight.previous`.
+  `preflight/preflight.previous`. **Leaving that file behind is expected**, not
+  debris: it is how going back stays a person's decision rather than a rebuild.
+  It is there only when a binary was already installed, and `git status` lists
+  it as untracked, because the repository ignores `preflight/preflight` and not
+  its `.previous`. Leave it.
 - **If they do not match, it refuses, loudly, and installs nothing.** The
   binary already on the box is left exactly as it was, and the refusal says
   which one that is. The file is not the one the portal published, or it was
@@ -111,11 +123,14 @@ It also refuses a matching binary too old to read the consent list the portal
 sends, because `preflight.sh` would refuse to run it.
 
 > **`-update` is the maintenance path, not the install path.** Once a box
-> runs a published binary that has it, `preflight/preflight -portal <url>
-> -update` fetches the current binary over the box's own signed channel and
-> checks it against the published digest itself. A box whose binary predates
-> `-update` cannot reach a newer one that way, which is why this step exists
-> and why it stays.
+> **is enrolled (step 4)** and runs a published binary that has it,
+> `sudo preflight/preflight -portal <url> -update` fetches the current binary
+> over the box's own signed channel and checks it against the published digest
+> itself. It signs as the fingerprint the box recorded at enrollment, so on a box
+> that has not enrolled it stops with `preflight: no -fingerprint, and this box
+> has not recorded one. Enrol first.` — which is one more reason it cannot be the
+> install path. A box whose binary predates `-update` cannot reach a newer one
+> that way either, which is why this step exists and why it stays.
 
 ## 3. Tell the box which portal it reports to
 
@@ -133,19 +148,56 @@ registration key**. It appears once, in that response.
 **Do not mail it, paste it into a ticket, or write it to a file.** Type it at
 the box.
 
-**On the box:**
+**On the box**, with the same portal URL you gave `set-portal.sh` — this
+command does not read `settings.env`, and it refuses to start without
+`-portal`:
 
 ```
-sudo ./enroll.sh
+sudo preflight/preflight -portal https://portal.rvatechvisions.com -enroll
 ```
 
-It asks for the key rather than taking it on the command line, so it does not
-land in shell history. It generates this box's keypair here; only the public
-half is ever sent.
+It asks:
 
-**Then compare the fingerprints by eye** — the one the card shows and the one
-the box printed. **That comparison is the only thing standing between a stolen
-key and an appliance nobody placed.** If they differ, stop.
+```
+registration key (not shown):
+```
+
+**Type the key at that prompt, never on the command line.** The binary asks
+for it rather than taking it as an argument, so it does not land in shell
+history or in the process list. What you type is not echoed; if the terminal
+will not turn echo off, it says `(could not turn echo off; what you type will be
+visible)` before you type.
+
+It uses this box's key at `/etc/cairn-appliance/appliance.key`, **generating
+one there first if none exists**, and sends only the public half with the
+registration key. When the portal accepts it, it prints:
+
+```
+enrolled
+fingerprint: <the fingerprint the portal bound>
+
+Compare that against the fingerprint on the connection card.
+They must match. That comparison is what catches a stolen key.
+```
+
+and records that fingerprint in `/etc/cairn-appliance/appliance.fingerprint`,
+which is what every later run signs as.
+
+**Then compare the fingerprints by eye** — the one on this client's
+connection card in the portal and the one the box printed. **That comparison
+is the only thing standing between a stolen key and an appliance nobody
+placed.** If they differ, stop.
+
+> **CORRECTED 2 October 2026.** This step said to run `sudo ./enroll.sh` and
+> that it *asks for the key rather than taking it on the command line*. It
+> does not ask for anything: `enroll.sh` only generates a keypair with
+> `openssl`, and the closing lines it prints still say the portal side of
+> enrolment is not built, which has been untrue since v4.47 on
+> 21 September 2026. Followed literally, this step redeemed nothing, wrote no
+> fingerprint, and step 5 then stopped at the credential fetch. **`enroll.sh`
+> is not needed anywhere in this install path**: the binary creates the key
+> itself when none exists. If it has been run already, the binary uses the key
+> it made.
 
 ## 5. Run it once, by hand, and read what it says
 
@@ -154,8 +206,13 @@ sudo ./preflight.sh
 ```
 
 **This is the step that tells you whether the visit worked.** It prints what it
-reached, what refused it, and what it was never asked to do — three states, and
-the third is not a failure.
+reached, what refused it, and what it was never asked to do — `found`,
+`refused` and `not asked` in its summary, and the third is not a failure.
+**There is a fourth, and it is about this box rather than the client:** a step
+this box's own software could not run — no binary, or one too old to hear the
+consent list — prints a `NOT RUN:` line and is counted as `not run` in the
+summary, never as refused or not asked. A `NOT RUN` sends you back to step 2b,
+not to the client.
 
 **A refusal here is a finding about the client's network, not a broken
 install.** Take the refusal text with you; it is the conversation to have with
@@ -176,7 +233,19 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now cairn-preflight.timer
 ```
 
-**The timer runs the same script you just ran by hand**, at the same path. What
+**The timer runs the same script you just ran by hand**, at the same path —
+**if the repository is where step 1 put it.** The unit names
+`/opt/cairn-appliance/preflight.sh` and does not look until five in the
+morning, so check it now rather than read it:
+
+```
+grep '^ExecStart=' /etc/systemd/system/cairn-preflight.service
+test -x /opt/cairn-appliance/preflight.sh && echo present || echo MISSING
+```
+
+The first must print `ExecStart=/opt/cairn-appliance/preflight.sh` and the
+second `present`. **If it says `MISSING`, the repository is somewhere else:
+move it to `/opt/cairn-appliance` rather than editing the unit.** Then what
 you tested is what runs at five in the morning.
 
 **Check it took:**
@@ -210,11 +279,16 @@ sudo systemctl start cairn-preflight.service
 
 ## Changing the schedule later
 
-**Two files, and they must move together:**
+**Two files, and they must move together** — and they are the **live copies
+step 6 put in `/etc/systemd/system/`**, not the ones in the repository's
+`systemd/` directory. systemd reads only the live copies; editing the
+repository's changes nothing that runs, and leaves the box differing from its
+own clone besides.
 
-- `cairn-preflight.timer` — `OnCalendar`, which is when it actually runs;
-- `cairn-preflight.service` — `CAIRN_INTERVAL_MINUTES`, which is what the box
-  tells the portal.
+- `/etc/systemd/system/cairn-preflight.timer` — `OnCalendar`, which is when it
+  actually runs;
+- `/etc/systemd/system/cairn-preflight.service` — `CAIRN_INTERVAL_MINUTES`,
+  which is what the box tells the portal.
 
 A timer moved to weekly with the service still declaring daily would have the
 portal call the box late six days out of seven. **The portal records when the
@@ -250,7 +324,10 @@ credential it can no longer fetch.
 
 | What you see | What it means |
 | --- | --- |
-| `enroll.sh` refuses | A key already exists here. Revoke on the card first, then re-enrol with a **new** key. A revoked registration is never re-armed |
+| `preflight: enrolment refused (` a status `):` and the portal's words | The portal would not redeem that registration key. It does not say whether the key was unknown, already redeemed or revoked, deliberately. Generate a **new** key on the card and run step 4 again. A revoked registration is never re-armed |
+| `preflight: -portal is required with -enroll, …` | Step 4 was run without `-portal`. It does not read the URL from `settings.env` |
+| A run stops with `preflight: no -fingerprint, and this box has not recorded one. Enrol first.` | Step 4 has not completed on this box. Run it |
+| `enroll.sh` says *This appliance already has a key* | You do not need `enroll.sh`: step 4 uses the key already here. To give the box a **new** identity, do what its refusal lists, in that order — revoke on the card **first**, then move the pair aside — and then run step 4 again with a new registration key |
 | preflight refuses on the key's permissions | The appliance key must be `600 root:root`. A key any local user can read is this box's identity readable by anybody with a shell |
 | A capability says *refused* | The client's directory said no. That is a finding, and it is the conversation to have with their administrator |
 | A capability says *not asked* | Nothing told the box to try. That is a gap in what it was told, not a failure of the box |

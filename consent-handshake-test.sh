@@ -60,6 +60,7 @@ eval "$(lift step_not_consented)"
 eval "$(lift run_capability)"
 eval "$(lift first_reason)"
 eval "$(lift json_safe)"
+eval "$(lift consent_report_json)"
 . "${HERE}/consent.sh"
 
 work="$(mktemp -d)"
@@ -130,6 +131,36 @@ case "$CRED_REASON" in
   *"09d3eec"*) ok "the reported reason names the binary that could not hear" ;;
   *) bad "reason: ${CRED_REASON}" ;;
 esac
+
+# --- the consent list as a field of the run report, WO-1004-I item 1 -------
+# Each of the three answers settle_consent gives is reported as itself, and a
+# run that never settled reports nothing, which the portal reads as not
+# reported rather than as any of the three. The not-sent case rewrites
+# CONSENT_UNHEARD, which the steps below read, so it is put back afterwards.
+saved_unheard="$CONSENT_UNHEARD"
+for case_ in "1 1 heard" "0 1 not-sent" "0 0 not-heard"; do
+  set -- $case_
+  PC_CAPABILITIES=""; PC_CAPABILITIES_SET="$1"; CONSENT_FETCHED="$2"; CRED_FAILED=0; CRED_REASON=""
+  CONSENT_LIST=""
+  settle_consent >/dev/null
+  consent_report_json
+  [ "$CONSENT_JSON" = ",\"consentList\":\"$3\"" ] \
+    && ok "a run that settled as $3 reports consentList $3" || bad "set=$1 fetched=$2 reported: ${CONSENT_JSON}"
+done
+CONSENT_LIST=""
+consent_report_json
+[ -z "$CONSENT_JSON" ] && ok "a run that never settled reports no consentList" || bad "unsettled reported: ${CONSENT_JSON}"
+CONSENT_LIST="maybe"
+consent_report_json
+[ -z "$CONSENT_JSON" ] && ok "only the three answers are ever reported" || bad "reported: ${CONSENT_JSON}"
+if grep -q 'printf .%s%s%s}. "\$interval_json" "\$BINARY_JSON" "\$CONSENT_JSON"' "$SCRIPT" \
+   && [ "$(grep -c '"\$BINARY_JSON" "\$CONSENT_JSON"' "$SCRIPT")" -eq 2 ]; then
+  ok "both report shapes, ran and could-not-start, carry the field"
+else
+  bad "a report shape does not carry CONSENT_JSON"
+fi
+CONSENT_UNHEARD="$saved_unheard"
+set --
 
 # --- a step consent never reached ------------------------------------------
 FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 CAP_JSON=""

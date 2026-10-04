@@ -108,6 +108,14 @@ NOTRUN=0
 # told; it may not report what it failed to hear as what it was told.
 CONSENT_FETCHED=0
 CONSENT_UNHEARD="no credential came from the portal, so no consent list arrived with one"
+
+# The same three answers as a field of the run report, so the portal reads
+# what this box heard rather than inferring it from the reason's prose.
+# WO-1004-I item 1. Set by settle_consent to heard, not-sent (a binary that
+# relays the list fetched, and the portal's answer carried none) or not-heard
+# (this box cannot tell whether the portal sent one). Empty until settled, and
+# an empty value is not reported, so the portal reads it as not reported.
+CONSENT_LIST=""
 CRED_REASON=""
 
 # When this run began, in UTC, stamped once and reported with the run.
@@ -231,18 +239,21 @@ binary_hears_consent() {
 #     list in the answer, so the portal sent none;
 #   - no list was HEARD, for the reason in CONSENT_UNHEARD, and this box
 #     cannot tell whether the portal sent one.
-# Sets CONSENT_KNOWN and CONSENTED, and prints the line.
+# Sets CONSENT_KNOWN, CONSENTED and CONSENT_LIST, and prints the line.
 settle_consent() {
   CONSENTED="$PC_CAPABILITIES"
   CONSENT_KNOWN="$PC_CAPABILITIES_SET"
   if [ "$CONSENT_KNOWN" -eq 1 ]; then
+    CONSENT_LIST="heard"
     say "consent   ${CONSENTED:-nothing granted}"
     return 0
   fi
   if [ "$CONSENT_FETCHED" -eq 1 ]; then
+    CONSENT_LIST="not-sent"
     CONSENT_UNHEARD="the portal sent no list of what this collector may read"
     say "NO CONSENT LIST: the portal answered without one, so nothing will be read."
   else
+    CONSENT_LIST="not-heard"
     say "NO CONSENT LIST WAS HEARD: ${CONSENT_UNHEARD}."
     say "  This box cannot tell whether the portal sent one, so nothing will be"
     say "  read -- and no step below is reported as a finding about the network."
@@ -2153,6 +2164,18 @@ binary_report_json() {
   BINARY_JSON="$(printf ',"binary":{"stamp":"%s","sha256":"%s"}' "$(json_safe "$stamp")" "$digest")"
 }
 
+# Whether this run heard its consent list, for the run report. WO-1004-I
+# item 1. Only the three values settle_consent writes are reported; anything
+# else -- empty because the run never settled -- is left out, and the portal
+# reads its absence as not reported rather than as any of the three.
+CONSENT_JSON=""
+consent_report_json() {
+  CONSENT_JSON=""
+  case "$CONSENT_LIST" in
+    heard|not-sent|not-heard) CONSENT_JSON="$(printf ',"consentList":"%s"' "$CONSENT_LIST")" ;;
+  esac
+}
+
 submit_run_report() {
   local finished payload status
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -2200,18 +2223,19 @@ submit_run_report() {
   fi
 
   binary_report_json "${HERE}/preflight/preflight"
+  consent_report_json
 
   if [ "$CRED_FAILED" -eq 1 ]; then
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s%s}' "$interval_json" "$BINARY_JSON"
+      printf '%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s%s}' "$interval_json" "$BINARY_JSON"
+      printf '%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON"
     } >"$payload"
   fi
 

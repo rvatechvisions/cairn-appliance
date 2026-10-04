@@ -153,8 +153,8 @@ consent_report_json
 CONSENT_LIST="maybe"
 consent_report_json
 [ -z "$CONSENT_JSON" ] && ok "only the three answers are ever reported" || bad "reported: ${CONSENT_JSON}"
-if grep -q 'printf .%s%s%s}. "\$interval_json" "\$BINARY_JSON" "\$CONSENT_JSON"' "$SCRIPT" \
-   && [ "$(grep -c '"\$BINARY_JSON" "\$CONSENT_JSON"' "$SCRIPT")" -eq 2 ]; then
+# Matched on the arguments, which grew the script's commit in WO-1004-K item 1a.
+if [ "$(grep -c '^ *printf .%s%s%s[%s]*}. "\$interval_json" "\$BINARY_JSON" "\$CONSENT_JSON"' "$SCRIPT")" -eq 2 ]; then
   ok "both report shapes, ran and could-not-start, carry the field"
 else
   bad "a report shape does not carry CONSENT_JSON"

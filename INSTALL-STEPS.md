@@ -80,10 +80,14 @@ not part of this install at all — see step 4.
 ## 2b. Install the binary the portal publishes
 
 **The portal publishes, you carry, the box verifies.** The appliance never
-compiles and never fetches executable code from anywhere but the portal; you
-carrying the portal's published file onto the box makes it fetch nothing, and
-the box checks the file against the digest the portal published before it is
-put where anything runs it.
+compiles and never fetches code on its own. Code reaches it two ways, both by
+you, and only one is verified. **The binary** you carry is checked by the box
+against the digest the portal published before it is put where anything runs
+it. **The scripts** -- `preflight.sh` and the files beside it -- arrive by the
+`git pull` in step 1, from GitHub, and **nothing verifies them against
+anything.** Each run report says which script commit ran and whether a file
+here was edited, so the portal can say which one it was. That is a record, not
+a check.
 
 **On your own machine, signed in to the portal as staff:**
 

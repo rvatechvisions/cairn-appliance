@@ -2176,6 +2176,37 @@ consent_report_json() {
   esac
 }
 
+# Which preflight.sh this run is, for the run report. WO-1004-K item 1a.
+#
+# The binary reaches this box verified against a digest the portal published.
+# This script reaches it by a person's git pull, verified against nothing, and
+# until this field the portal could not say which version of it ran. So the box
+# reports its own commit, and whether the tracked files here differ from that
+# commit: clean, dirty, or -- when git cannot answer -- unknown, with git's own
+# words for why. Untracked files are not counted, so the preflight.previous a
+# binary install leaves beside the binary does not make a box read as dirty;
+# an edited tracked file does.
+SCRIPT_JSON=""
+script_report_json() {
+  SCRIPT_JSON=""
+  local commit changes why
+  if ! commit="$(git -C "$HERE" rev-parse HEAD 2>&1)" || ! printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
+    why="git could not say which commit this script is: $(printf '%s' "$commit" | head -n 1)"
+    SCRIPT_JSON="$(printf ',"script":{"state":"unknown","reason":"%s"}' "$(json_safe "$why")")"
+    return 0
+  fi
+  if ! changes="$(git -C "$HERE" status --porcelain --untracked-files=no 2>&1)"; then
+    why="git could not say whether ${commit} has local changes: $(printf '%s' "$changes" | head -n 1)"
+    SCRIPT_JSON="$(printf ',"script":{"state":"unknown","reason":"%s"}' "$(json_safe "$why")")"
+    return 0
+  fi
+  if [ -z "$changes" ]; then
+    SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"clean"}' "$commit")"
+  else
+    SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"dirty"}' "$commit")"
+  fi
+}
+
 submit_run_report() {
   local finished payload status
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -2224,18 +2255,19 @@ submit_run_report() {
 
   binary_report_json "${HERE}/preflight/preflight"
   consent_report_json
+  script_report_json
 
   if [ "$CRED_FAILED" -eq 1 ]; then
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON"
+      printf '%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON"
+      printf '%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON"
     } >"$payload"
   fi
 

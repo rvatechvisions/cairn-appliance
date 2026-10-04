@@ -160,6 +160,12 @@ done
 # 3. Nothing FETCHES EXECUTABLE CODE from anywhere except the portal
 # ---------------------------------------------------------------------------
 #
+# Restated by WO-1004-K item 1b, 4 October 2026: what this section holds is
+# that nothing on the box fetches code on its own. The binary is verified
+# against the digest the portal publishes; the scripts arrive by a person's git
+# pull from GitHub and are verified against nothing. This check is about the
+# first half and does not reach the second.
+#
 # **The fourth refusal, and it is not implied by the other three.** Jackie’s
 # ruling, 24 September 2026, after a directory listing showed three Go
 # toolchains on RVA's own appliance -- go1.26.8 and go1.26.0 fetched on 20 September,

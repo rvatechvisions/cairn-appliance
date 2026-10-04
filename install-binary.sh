@@ -2,7 +2,8 @@
 #
 # Install a binary the portal published, carried here by a person.
 #
-#   sudo ./install-binary.sh <file> <sha256 printed on the collector card>
+#   sudo ./install-binary.sh <file> <sha256 published by the portal>
+#   The collector card prints this command whole, with the digest already in it.
 #
 # ## Why this is the install path
 #
@@ -70,12 +71,15 @@ verify_and_install() {
   fi
 
   actual="$(sha256sum "$file" | cut -c1-64)"
-  say "the digest on the card:     ${expected}"
+  # The digest it was GIVEN. It cannot know where that came from, and saying
+  # "the card" made a wrong digest read as the portal's. WO-1004-F item 4.
+  say "the digest you gave:        ${expected}"
   say "the file you carried:       ${actual}"
   if [ "$actual" != "$expected" ]; then
-    refuse_install "$target" "THE FILE DOES NOT MATCH THE DIGEST THE PORTAL PUBLISHED.
-  It is not the binary the portal offers, or it was damaged on the way.
-  Download it from the collector card again; do not run it."
+    refuse_install "$target" "THE FILE DOES NOT MATCH THE DIGEST YOU GAVE.
+  Either the digest is not the one the portal published -- copy the command from
+  the collector card, which carries it -- or the file is not the binary the
+  portal offers, or it was damaged on the way. Do not run it."
     return 1
   fi
   say "they match."
@@ -127,7 +131,8 @@ verify_and_install() {
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ "$#" -ne 2 ]; then
-    say "usage: sudo ./install-binary.sh <file> <sha256 printed on the collector card>"
+    say "usage: sudo ./install-binary.sh <file> <sha256 published by the portal>"
+    say "       the collector card prints this command whole, with the digest already in it"
     exit 2
   fi
   if [ "$(id -u)" -ne 0 ]; then

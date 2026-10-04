@@ -55,11 +55,11 @@ published="$(digest "${work}/carried")"
 out="$(verify_and_install "${work}/carried" "$(printf '0%.0s' $(seq 64))" "$target" 2>&1)"; status=$?
 [ "$status" -eq 1 ] && ok "a file that does not hash to the published digest is refused" || bad "status ${status}"
 case "$out" in
-  *"THE FILE DOES NOT MATCH THE DIGEST THE PORTAL PUBLISHED"*) ok "and it says so, loudly" ;;
+  *"THE FILE DOES NOT MATCH THE DIGEST YOU GAVE"*) ok "and it says so, loudly, naming the digest as given rather than as the portal's" ;;
   *) bad "printed: ${out}" ;;
 esac
 case "$out" in
-  *"the digest on the card:"*"the file you carried:"*) ok "both digests are printed, so the person sees the comparison" ;;
+  *"the digest you gave:"*"the file you carried:"*) ok "both digests are printed, so the person sees the comparison" ;;
   *) bad "printed: ${out}" ;;
 esac
 [ "$(digest "$target")" = "$old_digest" ] && ok "the installed binary is byte for byte what it was" || bad "the installed binary changed"

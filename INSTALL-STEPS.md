@@ -87,22 +87,26 @@ put where anything runs it.
 
 **On your own machine, signed in to the portal as staff:**
 
-1. Open the client's collector card on **Integrations**. Under *Appliances* it
-   says *The binary Cairn offers is built from …, SHA-256 …* and prints the
-   digest **whole**.
-2. Press **Download it**. The file is named `preflight-` and the first twelve
-   characters of that digest.
+1. Open the client's collector card on **Integrations**. Under *Appliance
+   software* it prints the install command **whole**, with the published
+   digest already in it, ready to copy. It is the only digest on the card
+   anybody types.
+2. Press **Download the published build**. The file is named `preflight-` and
+   the first twelve characters of that digest.
 3. Copy the file to the box (for example with `scp`, into `/tmp`). Leave the
-   card open: you will type the digest from it.
+   card open: you will copy the command from it.
 
 **On the box:**
 
 ```
 cd /opt/cairn-appliance
-sudo ./install-binary.sh /tmp/preflight-<first twelve> <the whole SHA-256 from the card>
+sudo ./install-binary.sh /tmp/preflight-<first twelve> <the whole SHA-256>
 ```
 
-**Read the two lines it prints, one above the other** — the digest you typed
+Copy it from the card rather than typing it: the card prints it with both the
+file name and the digest filled in.
+
+**Read the two lines it prints, one above the other** — the digest you gave
 and the digest of the file you carried. They must be the same.
 
 - **If they match**, it says `INSTALLED`, prints what the binary now says
@@ -114,8 +118,9 @@ and the digest of the file you carried. They must be the same.
   its `.previous`. Leave it.
 - **If they do not match, it refuses, loudly, and installs nothing.** The
   binary already on the box is left exactly as it was, and the refusal says
-  which one that is. The file is not the one the portal published, or it was
-  damaged on the way: download it again from the card. **Do not run it, and do
+  which one that is. Either the digest you gave is not the published one --
+  copy the command from the card again -- or the file is not the one the
+  portal published, or it was damaged on the way: download it again. **Do not run it, and do
   not work around the refusal** — the comparison is the whole of what makes the
   file trustworthy.
 
@@ -333,7 +338,7 @@ credential it can no longer fetch.
 | A capability says *not asked* | Nothing told the box to try. That is a gap in what it was told, not a failure of the box |
 | The card says *Not yet verified* after step 5 | The run did not reach the portal. The run itself still stands — what it reached printed on your screen |
 | preflight says *NOT RUN: the installed binary is too old to hear the consent list* | The binary predates the scripts. Install the published one by step 2b. Nothing was asked of the portal or the domain, and nothing about the client is implied |
-| `install-binary.sh` refuses: *THE FILE DOES NOT MATCH* | The file you carried is not the one the portal published. Download it again. The installed binary was not touched |
+| `install-binary.sh` refuses: *THE FILE DOES NOT MATCH THE DIGEST YOU GAVE* | First check the digest: copy the command from the card rather than retyping it. If it was copied, the file is not the one the portal published; download it again. The installed binary was not touched |
 
 **Nothing in this list is fixed by running it again and hoping.** Each line is
 a different thing to go and look at.

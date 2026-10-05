@@ -39,7 +39,7 @@ extract() {
   sed -n "/^${name}() {/,/^}/p" "$SCRIPT"
 }
 
-for fn in agrees parse_credential_block json_safe choose_dhcp_servers; do
+for fn in agrees parse_credential_block json_safe dhcp_list_key choose_dhcp_servers; do
   body="$(extract "$fn")"
   if [ -z "$body" ]; then
     printf 'FAIL: %s is not defined in preflight.sh — this test read nothing\n' "$fn"
@@ -48,7 +48,7 @@ for fn in agrees parse_credential_block json_safe choose_dhcp_servers; do
   eval "$body"
 done
 
-ok "the four functions were found in preflight.sh and evaluated"
+ok "the five functions were found in preflight.sh and evaluated"
 
 # ---------------------------------------------------------------------------
 # agrees: case-insensitively, because that is the fact
@@ -218,14 +218,25 @@ parse_credential_block < "${TMPDIR:-/tmp}/cred-list.txt"
 [ -z "$PC_DHCP_SERVERS" ] && ok "no dhcp-servers line reads as none named" || bad "a list appeared from nowhere: ${PC_DHCP_SERVERS}"
 
 SETTINGS=settings.env
-choose_dhcp_servers "dhcp01.example.test" ""
-[ "$DHCP_SERVERS" = "dhcp01.example.test" ] && [ "$DHCP_SERVERS_FROM" = "the portal" ] && ok "the portal's list is used, and said to be" || bad "portal list: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
-choose_dhcp_servers "dhcp01.example.test" "old-dhcp.example.test"
-[ "$DHCP_SERVERS" = "dhcp01.example.test" ] && case "$DHCP_SERVERS_FROM" in *old-dhcp.example.test*"not used"*) true ;; *) false ;; esac && ok "a disagreeing file list is named and not used" || bad "disagreement: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
-choose_dhcp_servers "" "old-dhcp.example.test"
-[ "$DHCP_SERVERS" = "old-dhcp.example.test" ] && case "$DHCP_SERVERS_FROM" in *"the portal names none"*) true ;; *) false ;; esac && ok "the file list is the fallback, and said to be" || bad "fallback: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}"
-choose_dhcp_servers "" ""
-[ -z "$DHCP_SERVERS" ] && ok "neither names any, and none is asked" || bad "servers from nowhere: ${DHCP_SERVERS}"
+# A run whose credential came from the portal. WO-1004-N item 1: the portal is
+# the only source, a disagreement asks nothing and names both, and a portal
+# naming none asks nothing and says where the servers are named.
+choose_dhcp_servers "dhcp01.example.test" "" portal
+[ "$DHCP_SERVERS" = "dhcp01.example.test" ] && [ "$DHCP_SERVERS_FROM" = "the portal" ] && [ -z "$DHCP_REFUSAL" ] && ok "the portal's list is used, and said to be" || bad "portal list: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}, refusal ${DHCP_REFUSAL}"
+choose_dhcp_servers "dhcp01.example.test, DC.example.test" "dc.example.test,dhcp01.example.test" portal
+[ "$DHCP_SERVERS" = "dhcp01.example.test, DC.example.test" ] && [ -z "$DHCP_REFUSAL" ] && ok "a file list naming the same servers agrees, whatever its order, case or spacing" || bad "agreement read as: ${DHCP_SERVERS}, refusal ${DHCP_REFUSAL}"
+choose_dhcp_servers "dhcp01.example.test" "old-dhcp.example.test" portal
+[ -z "$DHCP_SERVERS" ] && case "$DHCP_REFUSAL" in *"names dhcp01.example.test and settings.env names old-dhcp.example.test, and they disagree, so no DHCP server is asked"*) true ;; *) false ;; esac && ok "a disagreement asks nothing and names both lists" || bad "disagreement: servers ${DHCP_SERVERS}, refusal ${DHCP_REFUSAL}"
+choose_dhcp_servers "" "old-dhcp.example.test" portal
+[ -z "$DHCP_SERVERS" ] && case "$DHCP_REFUSAL" in *"the portal names no DHCP server, so none is asked. settings.env names old-dhcp.example.test, which is not used. Name the servers on the consent card, under DHCP leases, in DHCP servers, one per line."*) true ;; *) false ;; esac && ok "a portal naming none asks nothing, names the unused file list, and points at the field" || bad "portal names none: servers ${DHCP_SERVERS}, refusal ${DHCP_REFUSAL}"
+choose_dhcp_servers "" "" portal
+[ -z "$DHCP_SERVERS" ] && case "$DHCP_REFUSAL" in *"Name the servers on the consent card"*) true ;; *) false ;; esac && ok "a portal naming none with no file list still says where to name them" || bad "neither: servers ${DHCP_SERVERS}, refusal ${DHCP_REFUSAL}"
+
+# A lab run, whose credential was typed or set: no portal named anything.
+choose_dhcp_servers "" "old-dhcp.example.test" terminal
+[ "$DHCP_SERVERS" = "old-dhcp.example.test" ] && [ -z "$DHCP_REFUSAL" ] && case "$DHCP_SERVERS_FROM" in *"did not come from the portal"*) true ;; *) false ;; esac && ok "a lab run uses the file list, and says why" || bad "lab: ${DHCP_SERVERS} from ${DHCP_SERVERS_FROM}, refusal ${DHCP_REFUSAL}"
+choose_dhcp_servers "" "" environment
+[ -z "$DHCP_SERVERS" ] && [ -z "$DHCP_REFUSAL" ] && ok "a lab run naming none asks none, with no refusal to point at a portal it has not got" || bad "lab none: ${DHCP_SERVERS}, refusal ${DHCP_REFUSAL}"
 rm -f "${TMPDIR:-/tmp}/cred-none.txt" "${TMPDIR:-/tmp}/cred-empty.txt" "${TMPDIR:-/tmp}/cred-list.txt"
 
 printf '\n%s\n' "checks: ${checks}, failures: ${fails}"

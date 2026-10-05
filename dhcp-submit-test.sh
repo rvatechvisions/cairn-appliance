@@ -82,8 +82,10 @@ STUB
 chmod +x "${work}/preflight/preflight"
 
 SUBMISSIONS_LOG="${work}/submissions.log"
+SETTINGS="${work}/settings.env"
 run_step() {
-  HERE="$work" KERBEROS_OK=0 PRINCIPAL="svc@LAB.EXAMPLE" DHCP_SERVERS="dhcp01.lab.example"
+  HERE="$work" KERBEROS_OK=0 PRINCIPAL="svc@LAB.EXAMPLE" DHCP_SERVERS="${STEP_SERVERS-dhcp01.lab.example}"
+  DHCP_REFUSAL="${STEP_REFUSAL:-}"
   FOUND=0 REFUSED=0 UNASKED=0 EMPTY=0 CAP_NOTE=""
   : >"$calls"
   : >"$SUBMISSIONS_LOG"
@@ -142,6 +144,17 @@ run_step
 [ "$REFUSED" -eq 1 ] && [ "$EMPTY" -eq 0 ] && ok "a failure is counted with the refusals, never as empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED"
 case "$OUT" in *"this server refused"*) bad "a failure is called a refusal: $OUT" ;; *"cannot tell a"*) ok "and the screen says it cannot tell which" ;; *) bad "printed: $OUT" ;; esac
 unset STUB_MODE
+
+# WO-1004-N item 1: the chooser refused to name a server -- the portal named
+# none, or the portal and the settings file disagree. Nothing is asked, the
+# reason is the NOT ASKED line the run report stores, and the binary is never
+# called.
+STEP_SERVERS="" STEP_REFUSAL="the portal names no DHCP server, so none is asked. Name the servers on the consent card, under DHCP leases, in DHCP servers, one per line."
+run_step
+[ ! -s "$calls" ] && ok "a refused choice runs no binary" || bad "called: $(cat "$calls")"
+[ "$UNASKED" -eq 1 ] && [ "$REFUSED" -eq 0 ] && [ "$FOUND" -eq 0 ] && ok "and it is not asked, never refused" || bad "found ${FOUND}, refused ${REFUSED}, unasked ${UNASKED}"
+case "$OUT" in "NOT ASKED: the portal names no DHCP server, so none is asked."*) ok "the first line is the reason the report stores" ;; *) bad "printed: $OUT" ;; esac
+unset STEP_SERVERS STEP_REFUSAL
 
 # Submitting, and no portal named.
 CAIRN_PORTAL=""

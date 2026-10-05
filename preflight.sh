@@ -315,24 +315,71 @@ KINIT_PROMPT_STRIP='s/^Password for [^:]*: *//'
 DHCP_SERVERS="${CAIRN_DHCP_SERVERS:-}"
 DHCP_SERVERS_FROM=""
 
+# Why no DHCP server is asked, when the box decided not to ask one. Empty when
+# it did not decide that. WO-1004-N item 1.
+DHCP_REFUSAL=""
+
+# A server list in one comparable form: lower case, no spaces, sorted, so
+# "dc.example.test, dhcp2" and "DHCP2,dc.example.test" are the same list.
+dhcp_list_key() {
+  printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -d ' ' | tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -
+}
+
 # Which DHCP servers to ask. WO-0928-G item 3: the portal is where a client
-# names them, on the card where they allowed DHCP, so the portal's list wins.
-# The settings file is the fallback for a box configured before the portal
-# could hold a list, and the run says which one it used -- a list silently
-# coming from somewhere else is how a server nobody named gets asked.
+# names them, on the card where they allowed DHCP.
 #
-# $1 is the portal's list (possibly empty), $2 the settings file's.
+# **The portal is the only source when the run's credential came from it.**
+# WO-1004-N item 1. The consent card says the collector asks the servers the
+# client names and nothing else, and until then nothing is read. On 4 October
+# 2026 the portal named none and this box read a scope anyway, because the
+# settings file named one: the page's promise was false of the one appliance
+# there is. So, on a run whose credential came from the portal:
+#
+#   - the portal and the settings file name different lists: nothing is asked,
+#     and both are named, the way refuse_disagreement names a disagreeing
+#     domain. The box does not pick one;
+#   - the portal names none: nothing is asked, and the reason points at the
+#     field on the consent card where the servers are named.
+#
+# A lab run, whose credential was typed or set in the environment, has no
+# portal to name anything, so the settings file is used and the run says so.
+#
+# $1 is the portal's list (possibly empty), $2 the settings file's, $3 where
+# the run's credential came from (CREDENTIAL_SOURCE).
 choose_dhcp_servers() {
-  local portal="$1" local_list="$2"
-  if [ -n "$portal" ]; then
+  local portal="$1" local_list="$2" source="${3:-}"
+  local file="${SETTINGS:-settings}"
+  DHCP_REFUSAL=""
+  if [ "$source" = "portal" ]; then
+    if [ -z "$portal" ]; then
+      DHCP_SERVERS=""
+      DHCP_SERVERS_FROM=""
+      if [ -n "$local_list" ]; then
+        DHCP_REFUSAL="the portal names no DHCP server, so none is asked. ${file} names ${local_list}, which is not used. Name the servers on the consent card, under DHCP leases, in DHCP servers, one per line."
+      else
+        DHCP_REFUSAL="the portal names no DHCP server, so none is asked. Name the servers on the consent card, under DHCP leases, in DHCP servers, one per line."
+      fi
+      return 0
+    fi
+    if [ -n "$local_list" ] && [ "$(dhcp_list_key "$local_list")" != "$(dhcp_list_key "$portal")" ]; then
+      DHCP_SERVERS=""
+      DHCP_SERVERS_FROM=""
+      DHCP_REFUSAL="the portal names ${portal} and ${file} names ${local_list}, and they disagree, so no DHCP server is asked. Remove CAIRN_DHCP_SERVERS from ${file}, or change the DHCP servers on the consent card if the file is the one that is right."
+      return 0
+    fi
     DHCP_SERVERS="$portal"
     DHCP_SERVERS_FROM="the portal"
-    if [ -n "$local_list" ] && [ "$local_list" != "$portal" ]; then
-      DHCP_SERVERS_FROM="the portal; ${SETTINGS:-settings} also names ${local_list}, which is not used"
-    fi
+    return 0
+  fi
+  if [ -n "$portal" ]; then
+    # A portal list on a run whose credential did not come from the portal
+    # cannot happen today: the list arrives with the credential. Used if it
+    # does, and said to be.
+    DHCP_SERVERS="$portal"
+    DHCP_SERVERS_FROM="the portal"
   elif [ -n "$local_list" ]; then
     DHCP_SERVERS="$local_list"
-    DHCP_SERVERS_FROM="${SETTINGS:-settings}; the portal names none"
+    DHCP_SERVERS_FROM="${file}, on a run whose credential did not come from the portal"
   else
     DHCP_SERVERS=""
     DHCP_SERVERS_FROM=""
@@ -771,9 +818,11 @@ capability_credential_source || true
 # The run is then reported as could-not-start, naming why.
 # ---------------------------------------------------------------------------
 . "${HERE}/consent.sh"
-choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}"
+choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}" "$CREDENTIAL_SOURCE"
 if [ -n "$DHCP_SERVERS" ]; then
   say "dhcp      ${DHCP_SERVERS} (from ${DHCP_SERVERS_FROM})"
+elif [ -n "$DHCP_REFUSAL" ]; then
+  say "dhcp      none asked: ${DHCP_REFUSAL}"
 fi
 say ""
 settle_consent
@@ -1670,6 +1719,11 @@ capability_dhcp() {
     UNASKED=$((UNASKED + 1))
     return 1
   fi
+  if [ -n "$DHCP_REFUSAL" ]; then
+    say "NOT ASKED: ${DHCP_REFUSAL}"
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
   if [ -z "$DHCP_SERVERS" ]; then
     say "NOT ASKED: no DHCP server is named, in the portal or in ${SETTINGS}."
     UNASKED=$((UNASKED + 1))
@@ -1766,6 +1820,13 @@ capability_dhcp() {
   # WO-1004-L item 4: the time is when the file at this path was last
   # written -- an install, not this run -- and it printed with no zone beside
   # the ticket's, so the run read as having two clocks. Both are said now.
+  #
+  # WO-1004-P item 4b, kept as the example: on the next run the same field
+  # read 18 seconds before the ticket, because the binary had just been
+  # reinstalled. Five hours off one day and right to the second the next, for
+  # a reason unconnected to what it seems to measure. A value that happens to
+  # look correct is the hardest kind to find; the label is what makes it
+  # readable either way.
   say "  probe: ${reported}"
   say "    file last written $(date -r "$binary" '+%Y-%m-%d %H:%M:%S %Z (UTC%z)' 2>/dev/null || echo '(not readable)'): the file's own modification time, not this run's"
 

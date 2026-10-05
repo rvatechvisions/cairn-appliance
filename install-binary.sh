@@ -3,7 +3,7 @@
 # Install a binary the portal published, carried here by a person.
 #
 #   sudo ./install-binary.sh <file> <sha256 published by the portal>
-#   The collector card prints this command whole, with the digest already in it.
+#   The portal prints this command whole for staff, with the digest already in it.
 #
 # ## Why this is the install path
 #
@@ -84,6 +84,23 @@ verify_and_install() {
   fi
   say "they match."
 
+  # **The build already installed is a no-op, named as one, and allowed.**
+  # WO-1004-P item 4a. On 4 October 2026 a person installed the build the box
+  # was already running, twice, because the card told him to; both succeeded,
+  # and the second moved preflight.previous onto the same build, so the
+  # rollback that file implies was gone. Refusing a harmless action is how a
+  # person learns to work around a script, so it is allowed -- and changes
+  # nothing, so preflight.previous keeps the build that came before.
+  if [ -x "$target" ] && [ "$(sha256sum "$target" | cut -c1-64)" = "$expected" ]; then
+    say ""
+    say "ALREADY INSTALLED: ${target} is already this build. Nothing was changed."
+    say "  it says:   $("$target" -version 2>&1)"
+    if [ -e "${target}.previous" ]; then
+      say "  previous:  ${target}.previous is left as it was ($("${target}.previous" -version 2>&1 || true))"
+    fi
+    return 0
+  fi
+
   staged="${target}.incoming"
   if ! cp "$file" "$staged" || ! chmod 755 "$staged"; then
     rm -f "$staged"
@@ -132,7 +149,7 @@ verify_and_install() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ "$#" -ne 2 ]; then
     say "usage: sudo ./install-binary.sh <file> <sha256 published by the portal>"
-    say "       the collector card prints this command whole, with the digest already in it"
+    say "       the portal prints this command whole for staff, with the digest already in it"
     exit 2
   fi
   if [ "$(id -u)" -ne 0 ]; then

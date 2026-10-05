@@ -90,5 +90,19 @@ case "$out" in
   *) bad "printed: ${out}" ;;
 esac
 
+# --- the same build again: allowed, named as a no-op, nothing moves ---------
+# WO-1004-P item 4a. Installed twice on 4 October 2026 because the card said to,
+# and the second install moved preflight.previous onto the running build.
+installed_mtime="$(stat -c %Y "$target")"
+out="$(verify_and_install "${work}/carried" "$published" "$target" 2>&1)"; status=$?
+[ "$status" -eq 0 ] && ok "installing the build already installed is allowed" || bad "status ${status}: ${out}"
+case "$out" in
+  *"ALREADY INSTALLED:"*"Nothing was changed."*) ok "and it is named as a no-op" ;;
+  *) bad "printed: ${out}" ;;
+esac
+printf '%s\n' "$out" | grep -q '^INSTALLED:' && bad "it also claimed an install: ${out}" || ok "and it does not claim an install"
+[ "$(digest "${target}.previous")" = "$old_digest" ] && ok "and preflight.previous still holds the build before it" || bad "previous now $(digest "${target}.previous")"
+[ "$(stat -c %Y "$target")" = "$installed_mtime" ] && [ ! -e "${target}.incoming" ] && ok "and the installed file is not rewritten or staged" || bad "the installed file was touched"
+
 printf '\n%s checks, %s failed\n' "$checks" "$fails"
 [ "$fails" -eq 0 ]

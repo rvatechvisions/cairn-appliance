@@ -58,6 +58,24 @@ cat >"${work}/preflight/preflight" <<STUB
 #!/usr/bin/env bash
 if [ "\${1:-}" = "-version" ]; then echo "preflight 2026.10.01 0000000000000000000000000000000000000000"; exit 0; fi
 printf '%s\n' "\$*" >>"${calls}"
+case "\${STUB_MODE:-}" in
+  empty)
+    echo "scopes: 1 attempted, 0 could not be read completely, 1 empty"
+    echo "devices: 0, from leases whose hardware address could be read; 0 refused as unreadable"
+    echo "preflight: no lease with a readable hardware address was found, so nothing was sent" >&2
+    exit 1 ;;
+  partial)
+    echo "scopes: 2 attempted, 1 could not be read completely, 1 empty"
+    echo "devices: 0, from leases whose hardware address could be read; 0 refused as unreadable"
+    echo "preflight: no lease with a readable hardware address was found, so nothing was sent" >&2
+    exit 1 ;;
+  denied)
+    echo "preflight: R_DhcpEnumSubnets: ERROR_ACCESS_DENIED" >&2
+    exit 1 ;;
+  failed)
+    echo "preflight: dial tcp: i/o timeout" >&2
+    exit 1 ;;
+esac
 echo "read 2 scopes"
 case "\$*" in *-collect-dhcp*) echo "sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; echo submitted ;; esac
 STUB
@@ -66,8 +84,9 @@ chmod +x "${work}/preflight/preflight"
 SUBMISSIONS_LOG="${work}/submissions.log"
 run_step() {
   HERE="$work" KERBEROS_OK=0 PRINCIPAL="svc@LAB.EXAMPLE" DHCP_SERVERS="dhcp01.lab.example"
-  FOUND=0 REFUSED=0 UNASKED=0 CAP_NOTE=""
+  FOUND=0 REFUSED=0 UNASKED=0 EMPTY=0 CAP_NOTE=""
   : >"$calls"
+  : >"$SUBMISSIONS_LOG"
   OUT="$(capability_dhcp)" ; capability_dhcp >/dev/null
 }
 
@@ -89,6 +108,40 @@ run_step
 [ "$CAP_NOTE" = "submitted to the portal from 1 of 1 DHCP server(s)" ] && ok "the note counts what was submitted" || bad "note: $CAP_NOTE"
 grep -Eq "^[0-9T:Z-]+ dhcp01\.lab\.example sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\$" "$SUBMISSIONS_LOG" && ok "the submission digest is kept on the box, with the time and the server" || bad "kept: $(cat "$SUBMISSIONS_LOG" 2>&1)"
 type keep_submission_digest >/dev/null 2>&1 && ok "the digest keeper was lifted, so its absence would fail here" || bad "keep_submission_digest is not defined"
+[ "$EMPTY" -eq 0 ] && ok "a read that sent leases is not counted empty" || bad "empty: $EMPTY"
+
+# WO-1004-L item 1. Submitting, and the one scope the server serves is empty:
+# the binary exits non-zero because it had nothing to send. The lines it prints
+# are copied from preflight/collect.go. That is a read, not a refusal.
+export STUB_MODE=empty
+run_step
+[ "$REFUSED" -eq 0 ] && ok "an empty scope is not counted as a refusal" || bad "refused: $REFUSED"
+[ "$FOUND" -eq 1 ] && [ "$EMPTY" -eq 1 ] && ok "it is counted with the capabilities that answered, and as empty" || bad "found: $FOUND, empty: $EMPTY"
+case "$OUT" in *"this server refused"*) bad "the screen calls an empty scope a refusal: $OUT" ;; *) ok "the screen does not say refused" ;; esac
+case "$OUT" in *"That is a read, not a refusal."*) ok "the screen says it was a read" ;; *) bad "printed: $OUT" ;; esac
+case "$OUT" in *"NOT KEPT"*) bad "a read that sent nothing reports a digest missing: $OUT" ;; *) ok "no missing digest is reported when nothing was sent" ;; esac
+case "$OUT" in *"nothing was submitted from dhcp01.lab.example, so there is no submission digest to keep."*) ok "the absent digest is said as a non-event" ;; *) bad "printed: $OUT" ;; esac
+[ ! -s "$SUBMISSIONS_LOG" ] && ok "and nothing is written to the digest log" || bad "kept: $(cat "$SUBMISSIONS_LOG")"
+[ "$CAP_NOTE" = "submitted to the portal from 0 of 1 DHCP server(s); 1 answered with every scope empty, so nothing was sent from them" ] && ok "the note says why nothing was sent" || bad "note: $CAP_NOTE"
+
+# A scope that could not be read completely is not an empty one.
+export STUB_MODE=partial
+run_step
+[ "$EMPTY" -eq 0 ] && [ "$REFUSED" -eq 1 ] && ok "an incomplete read is not called empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED"
+case "$OUT" in *"cannot tell a"*) ok "and the screen says it cannot tell a refusal from no answer" ;; *) bad "printed: $OUT" ;; esac
+
+# The server said no.
+export STUB_MODE=denied
+run_step
+[ "$REFUSED" -eq 1 ] && [ "$FOUND" -eq 0 ] && ok "ERROR_ACCESS_DENIED is counted as a refusal" || bad "found: $FOUND, refused: $REFUSED"
+case "$OUT" in *"this server refused (ERROR_ACCESS_DENIED)"*) ok "and the screen says refused" ;; *) bad "printed: $OUT" ;; esac
+
+# The read failed with no word from the server.
+export STUB_MODE=failed
+run_step
+[ "$REFUSED" -eq 1 ] && [ "$EMPTY" -eq 0 ] && ok "a failure is counted with the refusals, never as empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED"
+case "$OUT" in *"this server refused"*) bad "a failure is called a refusal: $OUT" ;; *"cannot tell a"*) ok "and the screen says it cannot tell which" ;; *) bad "printed: $OUT" ;; esac
+unset STUB_MODE
 
 # Submitting, and no portal named.
 CAIRN_PORTAL=""

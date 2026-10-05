@@ -49,6 +49,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FOUND=0
 REFUSED=0
 UNASKED=0
+# Capabilities counted in FOUND whose read finished and held nothing. A read,
+# not a refusal; counted apart so the tally can say so. WO-1004-L item 2.
+EMPTY=0
+
+# Where this run's credential came from, said on its own line and never counted
+# as a capability. WO-1004-L item 2: step 0 was counted in FOUND, so a run that
+# answered one capability printed two. CREDENTIAL_SOURCE is the same fact as one
+# of the seven values the run report sends; the portal keeps it in its own
+# column, credential_source, and counts it nowhere.
+CREDENTIAL_FROM="not settled: the credential step did not run"
+CREDENTIAL_SOURCE=""
 
 say() { printf '%s\n' "$*"; }
 rule() { printf '\n--- %s ---\n' "$*"; }
@@ -577,7 +588,8 @@ capability_credential_source() {
       say "  Nothing was fetched, nothing was asked of the domain, and nothing"
       say "  here is about the portal or the customer. Install the published"
       say "  binary by the path in INSTALL-STEPS.md and run this again."
-      NOTRUN=$((NOTRUN + 1))
+      CREDENTIAL_FROM="none: ${CONSENT_UNHEARD}"
+      CREDENTIAL_SOURCE="not-fetched"
       CRED_FAILED=1
       CRED_REASON="${CONSENT_UNHEARD}; nothing was fetched or read"
       return 1
@@ -623,7 +635,8 @@ capability_credential_source() {
         say "  is a binary and a script from different installs: install the"
         say "  published binary by the path in INSTALL-STEPS.md and try again."
         say "  Nothing was typed and nothing was sent to the domain."
-        NOTRUN=$((NOTRUN + 1))
+        CREDENTIAL_FROM="none: the portal answered and the binary's credential block was incomplete"
+        CREDENTIAL_SOURCE="portal-incomplete"
         CRED_FAILED=1
         CRED_REASON="the binary's credential block did not carry the expected fields"
         CONSENT_UNHEARD="the binary's credential block was incomplete, so no consent list was read from it"
@@ -676,7 +689,8 @@ capability_credential_source() {
       else
         say "  controller: ${DC}  (from ${SETTINGS}; the portal has none)"
       fi
-      FOUND=$((FOUND + 1))
+      CREDENTIAL_FROM="the portal, for this run"
+      CREDENTIAL_SOURCE="portal"
       return 0
     fi
 
@@ -684,15 +698,20 @@ capability_credential_source() {
     # and was told a portal; if the portal would not hand it a credential,
     # that is the finding, and asking a human to type one instead would
     # paper over exactly the thing this run is testing.
+    # WO-1004-L item 1: this read as REFUSED, and the binary exits the same way
+    # when the portal refuses and when it cannot be reached. A failed fetch is
+    # not evidence that anybody said no, so it is said as what this box knows.
     say ""
-    say "REFUSED: enrolled, and the portal would not hand over a credential."
+    say "NO CREDENTIAL: enrolled, and the fetch from the portal failed."
     say "  Nothing was typed and nothing was sent to the domain."
-    say "  The portal named the reason on stderr above. The usual causes are a"
-    say "  revoked appliance, a clock more than five minutes out, or no"
-    say "  credential saved on that connection yet."
-    REFUSED=$((REFUSED + 1))
+    say "  This box cannot tell a refusal from a portal that did not answer; the"
+    say "  binary's own words are on stderr above. The usual causes are a revoked"
+    say "  appliance, a clock more than five minutes out, no credential saved on"
+    say "  that connection yet, or no route to the portal."
+    CREDENTIAL_FROM="none: the fetch from the portal failed, refused or unanswered"
+    CREDENTIAL_SOURCE="portal-failed"
     CRED_FAILED=1
-    CRED_REASON="the portal would not hand over a credential"
+    CRED_REASON="the credential fetch from the portal failed, and this box cannot tell a refusal from no answer"
     return 1
   fi
 
@@ -701,6 +720,7 @@ capability_credential_source() {
     IFS= read -rs CAIRN_PASSWORD
     printf '\n'
     export CAIRN_PASSWORD
+    CREDENTIAL_TYPED=1
   fi
 
   if [ -n "${CAIRN_PASSWORD:-}" ]; then
@@ -712,7 +732,13 @@ capability_credential_source() {
     say "  nothing writes it down -- but it passed through a human's terminal,"
     say "  which is exactly what the portal fetch exists to avoid."
     say "  **Never use this at a customer.** See LAB-BUILD.md."
-    FOUND=$((FOUND + 1))
+    if [ "${CREDENTIAL_TYPED:-0}" -eq 1 ]; then
+      CREDENTIAL_FROM="this operator's terminal, typed for this run"
+      CREDENTIAL_SOURCE="terminal"
+    else
+      CREDENTIAL_FROM="CAIRN_PASSWORD, set in the environment of this run"
+      CREDENTIAL_SOURCE="environment"
+    fi
     return 0
   fi
 
@@ -727,7 +753,8 @@ capability_credential_source() {
   say ""
   say "  Do not put a password in ${SETTINGS}."
   say "  This script refuses to start if it finds one there."
-  UNASKED=$((UNASKED + 1))
+  CREDENTIAL_FROM="none: no source, and no terminal to ask at"
+  CREDENTIAL_SOURCE="none"
   CRED_FAILED=1
   CRED_REASON="no credential source, and no terminal to ask at"
   return 1
@@ -1103,6 +1130,8 @@ capability_kerberos() {
         say "  cache: ${KRB5CCNAME}"
         say "  in RAM (tmpfs), private to root, removed when this script ends."
         printf '%s\n' "$tickets" | sed 's/^/  /'
+        # WO-1004-L item 4: klist prints its times with no zone, in this box's.
+        say "  klist's times are this box's local time, $(date '+%Z, UTC%z'), and these tickets were issued in this run."
         FOUND=$((FOUND + 1))
         return 0
         ;;
@@ -1733,7 +1762,12 @@ capability_dhcp() {
   # One line, not two. This printed `built:` twice in a row -- once with the
   # stamp and once with the file’s timestamp -- which reads as one fact
   # stated twice with different values rather than as two facts.
-  say "  probe: $(date -r "$binary" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '(no mtime)') — ${reported}"
+  #
+  # WO-1004-L item 4: the time is when the file at this path was last
+  # written -- an install, not this run -- and it printed with no zone beside
+  # the ticket's, so the run read as having two clocks. Both are said now.
+  say "  probe: ${reported}"
+  say "    file last written $(date -r "$binary" '+%Y-%m-%d %H:%M:%S %Z (UTC%z)' 2>/dev/null || echo '(not readable)'): the file's own modification time, not this run's"
 
   # Each server asked and answered on its own. A site with six DHCP servers
   # where one refuses is a different fact from a site with five servers, and
@@ -1785,17 +1819,54 @@ capability_dhcp() {
     submit=1
     mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
   fi
-  local submitted=0 asked=0
+  local submitted=0 asked=0 empty=0 answered=0
 
-  # One read of one server: its output shown exactly as before, and, when
-  # submitting, the digest line kept. The status is the binary's own.
+  # One read of one server: its output shown exactly as before, and what the
+  # server's answer WAS, set in DHCP_READ -- one of four, WO-1004-L item 1:
+  #
+  #   answered  the binary finished: it read, and submitted if asked to;
+  #   empty     every scope it attempted was read to the end and held no
+  #             lease, so there was nothing to send -- a successful read;
+  #   refused   the server answered ERROR_ACCESS_DENIED;
+  #   failed    anything else. This run cannot tell a refusal from a server
+  #             that did not answer, and says so rather than choosing.
+  #
+  # **An empty scope is not a refusal.** In collect mode the binary exits
+  # non-zero when it found no lease to send, and that exit used to be read as
+  # the server saying no -- so the first reading from a real domain controller
+  # reported a refusal for a scope that was simply empty. The binary prints its
+  # own counts on two fixed lines, and those are read here: every scope
+  # attempted, none unreadable, every one empty, and no device or unreadable
+  # lease. Read from this script's own binary, whose format is ours, and when
+  # the lines are not there the read is FAILED, never EMPTY and never REFUSED.
+  #
+  # The digest is kept only when the binary printed one. Its absence after a
+  # read that sent nothing is not a problem and is said as what it is.
+  DHCP_READ=""
   dhcp_read() {
-    local output status=0
+    local output status=0 scopes devices
     output="$(mktemp)"
     CAIRN_PRINCIPAL="$PRINCIPAL" "$binary" "${mode_args[@]}" "$1" "${probe_args[@]}" >"$output" 2>&1 || status=$?
     sed 's/^/  /' "$output"
+    scopes="$(grep -m 1 '^scopes: ' "$output")"
+    devices="$(grep -m 1 '^devices: ' "$output")"
+    if [ "$status" -eq 0 ]; then
+      DHCP_READ="answered"
+    elif [[ "$scopes" =~ ^scopes:\ ([1-9][0-9]*)\ attempted,\ 0\ could\ not\ be\ read\ completely,\ ([0-9]+)\ empty$ ]] \
+         && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] \
+         && [ "$devices" = "devices: 0, from leases whose hardware address could be read; 0 refused as unreadable" ]; then
+      DHCP_READ="empty"
+    elif grep -q 'ERROR_ACCESS_DENIED' "$output"; then
+      DHCP_READ="refused"
+    else
+      DHCP_READ="failed"
+    fi
     if [ "$submit" -eq 1 ]; then
-      keep_submission_digest "$1" "$output"
+      if grep -q 'body SHA-256' "$output" || [ "$DHCP_READ" = "answered" ]; then
+        keep_submission_digest "$1" "$output"
+      else
+        say "  nothing was submitted from ${1}, so there is no submission digest to keep."
+      fi
     fi
     rm -f "$output"
     return "$status"
@@ -1829,25 +1900,42 @@ capability_dhcp() {
     # ticket it needs lives in a tmpfs cache this script deletes on exit --
     # so by the time somebody has a shell to run it from, the credential is
     # gone. A diagnostic flag nobody can reach is a flag that does not exist.
-    if dhcp_read "$server"; then
-      any_found=1
-      if [ "$submit" -eq 1 ]; then
-        submitted=$((submitted + 1))
-      fi
-    else
-      # "Refused" rather than "did not answer", because they are different
-      # facts and this script spends its whole output insisting on that.
-      #
-      # ERROR_ACCESS_DENIED from R_DhcpEnumSubnets is the server ANSWERING: the
-      # mapper resolved, the interface bound, Kerberos authenticated and the
-      # call was dispatched. Calling that silence would report a working DHCP
-      # service as unreachable and send somebody to look at the network.
-      say "  this server refused. The others are still being asked."
-    fi
+    dhcp_read "$server" || true
+    case "$DHCP_READ" in
+      answered)
+        any_found=1
+        answered=$((answered + 1))
+        if [ "$submit" -eq 1 ]; then
+          submitted=$((submitted + 1))
+        fi
+        ;;
+      empty)
+        # A successful read that found nothing to send. Kept out of the refusal
+        # count: it is evidence that nobody holds a lease on this server today,
+        # and about nothing else.
+        any_found=1
+        empty=$((empty + 1))
+        say "  this server answered: every scope it serves was read and is empty. That is a read, not a refusal."
+        ;;
+      refused)
+        # ERROR_ACCESS_DENIED from R_DhcpEnumSubnets is the server ANSWERING: the
+        # mapper resolved, the interface bound, Kerberos authenticated and the
+        # call was dispatched. Calling that silence would report a working DHCP
+        # service as unreachable and send somebody to look at the network.
+        say "  this server refused (ERROR_ACCESS_DENIED). The others are still being asked."
+        ;;
+      *)
+        say "  this server did not complete the read, in the binary's words above. This run cannot tell a"
+        say "  refusal from a server that did not answer, and counts it with the refusals rather than guess."
+        ;;
+    esac
   done
 
   if [ "$submit" -eq 1 ]; then
     CAP_NOTE="submitted to the portal from ${submitted} of ${asked} DHCP server(s)"
+    if [ "$empty" -gt 0 ]; then
+      CAP_NOTE="${CAP_NOTE}; ${empty} answered with every scope empty, so nothing was sent from them"
+    fi
   else
     CAP_NOTE="probed on this box only; nothing was submitted, because CAIRN_DHCP_SUBMIT is not yes"
     say ""
@@ -1856,6 +1944,9 @@ capability_dhcp() {
 
   if [ "$any_found" -eq 1 ]; then
     FOUND=$((FOUND + 1))
+    if [ "$answered" -eq 0 ]; then
+      EMPTY=$((EMPTY + 1))
+    fi
     return 0
   fi
 
@@ -2071,24 +2162,24 @@ run_capability relay capability_relay || true
 
 # ---------------------------------------------------------------------------
 rule "what this appliance can reach"
-# **This tally counts SIX and the portal counts five, and both are right.**
+# **Capabilities are counted as capabilities.** WO-1004-L item 2. Step 0 --
+# where the credential came from -- was counted in FOUND here and not by the
+# portal, so a run that answered one capability printed two and the tally and
+# the card disagreed by one. It is a different fact, and it has its own line.
 #
-# Step 0 -- where the credential came from -- is one of the things counted
-# here, because it is one of the things this run did. The report sends it as
-# the run OUTCOME rather than as a capability: a run that could not get a
-# credential asked the domain nothing, so it has no capability list at all
-# rather than an empty one.
-#
-# Saying so on both surfaces is the point. Two numbers that disagree invite
-# subtraction, and a reader with no noun beside either will decide one is
-# wrong.
-say "found:      ${FOUND}   (including step 0, where the credential came from)"
+# An empty read is counted where it belongs, with the capabilities that
+# answered, and said on its own line so nobody reads it as data.
+say "answered:   $((FOUND - EMPTY))"
+if [ "$EMPTY" -gt 0 ]; then
+  say "empty:      ${EMPTY}   (read to the end and held nothing -- a read, not a refusal)"
+fi
 say "refused:    ${REFUSED}"
 say "not asked:  ${UNASKED}"
 if [ "$NOTRUN" -gt 0 ]; then
   say "not run:    ${NOTRUN}   (this box could not hear what it may read -- nothing"
   say "            here is about the customer's network)"
 fi
+say "credential: ${CREDENTIAL_FROM}   (not a capability, and counted in none of the above)"
 say ""
 say "Three states, not two. A capability that was never asked -- because"
 say "something it depends on failed, or because nothing configured it -- is not"
@@ -2107,7 +2198,11 @@ say ""
 # and reading it as *this does not work*.
 #
 if [ "$FOUND" -gt 0 ] && [ "$REFUSED" -gt 0 ]; then
-  say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered and ${REFUSED} refused."
+  if [ "$EMPTY" -gt 0 ]; then
+    say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered, ${EMPTY} of them empty, and ${REFUSED} refused."
+  else
+    say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered and ${REFUSED} refused."
+  fi
   say "  That is a result, not a failed run. The ones that answered are proven"
   say "  on this host with this credential, and what they proved stays true"
   say "  whatever refused after them -- these capabilities need different"
@@ -2257,17 +2352,26 @@ submit_run_report() {
   consent_report_json
   script_report_json
 
+  # Where the credential came from, as one of the seven values the portal's
+  # credential_source column accepts. WO-1004-L items 2 and 6. Left out when the
+  # step never settled, which the portal reads as not reported.
+  local credential_json=""
+  case "$CREDENTIAL_SOURCE" in
+    portal|portal-incomplete|portal-failed|not-fetched|environment|terminal|none)
+      credential_json="$(printf ',"credentialSource":"%s"' "$CREDENTIAL_SOURCE")" ;;
+  esac
+
   if [ "$CRED_FAILED" -eq 1 ]; then
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON"
+      printf '%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON"
+      printf '%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json"
     } >"$payload"
   fi
 
@@ -2282,8 +2386,9 @@ submit_run_report() {
 
   if [ "$status" -eq 0 ]; then
     say ""
-    say "REPORTED: the portal has what this run reached, and when."
-    say "  The connection card now says so instead of \"Not yet verified\"."
+    # WO-1004-L item 3: this said what the connection card now shows. The box
+    # cannot see the card; what it knows is that the portal accepted the report.
+    say "REPORTED: the portal accepted this run's report."
   else
     # **A refused report is said out loud rather than swallowed.** The run
     # itself still stands -- what it reached is on the screen above -- and

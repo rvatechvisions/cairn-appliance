@@ -107,6 +107,14 @@ PRINCIPAL="$LOCAL_PRINCIPAL"
 # leaving somebody to infer it from a value they cannot check.
 FIELD_SOURCE="settings.env"
 
+# Where each of the three came from, per field, for the block that prints them
+# once they are settled. WO-1004-RS item 5. The portal supplies the account
+# always and the domain and controller where it holds them; anything it does not
+# supply stays the file's.
+REALM_FROM="${SETTINGS}"
+DC_FROM="${SETTINGS}"
+PRINCIPAL_FROM="${SETTINGS}"
+
 # Set when the credential step could not produce one, and it carries the
 # reason. **A run that could not start is not a run that found nothing**,
 # and this is the variable that keeps the two apart all the way to the
@@ -393,11 +401,50 @@ choose_dhcp_servers() {
   fi
 }
 
+# Which commit this script is and whether a tracked file here differs from it,
+# as SCRIPT_ID_STATE (clean, dirty or unknown), SCRIPT_ID_COMMIT and
+# SCRIPT_ID_REASON. One function, read by the run report and by the line the
+# person at the terminal sees, so the two cannot disagree. WO-1004-RS item 6.
+script_identity() {
+  SCRIPT_ID_STATE="" SCRIPT_ID_COMMIT="" SCRIPT_ID_REASON=""
+  local commit changes
+  if ! commit="$(git -C "$HERE" rev-parse HEAD 2>&1)" || ! printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
+    SCRIPT_ID_STATE="unknown"
+    SCRIPT_ID_REASON="git could not say which commit this script is: $(printf '%s' "$commit" | head -n 1)"
+    return 0
+  fi
+  if ! changes="$(git -C "$HERE" status --porcelain --untracked-files=no 2>&1)"; then
+    SCRIPT_ID_STATE="unknown"
+    SCRIPT_ID_REASON="git could not say whether ${commit} has local changes: $(printf '%s' "$changes" | head -n 1)"
+    return 0
+  fi
+  SCRIPT_ID_COMMIT="$commit"
+  if [ -z "$changes" ]; then SCRIPT_ID_STATE="clean"; else SCRIPT_ID_STATE="dirty"; fi
+}
+
+# The script's identity as the person at the terminal reads it. WO-1004-RS
+# item 6: the run sent the portal its commit and printed nothing, so the one
+# person who had just pulled could not see from the output whether the pull
+# took.
+script_line() {
+  script_identity
+  case "$SCRIPT_ID_STATE" in
+    clean) say "script    preflight.sh at ${SCRIPT_ID_COMMIT}, no tracked file edited on this box" ;;
+    dirty) say "script    preflight.sh at ${SCRIPT_ID_COMMIT}, WITH A TRACKED FILE EDITED ON THIS BOX" ;;
+    *) say "script    preflight.sh, commit not known: ${SCRIPT_ID_REASON}" ;;
+  esac
+}
+
+# **Nothing here is printed before it is settled.** WO-1004-RS item 5: this
+# block printed the domain, controller, account and DHCP servers from the
+# settings file, with no source, at the top of the screen -- and the portal is
+# the source of all four on an enrolled box, so on the day the two disagree the
+# first thing a person reads would name a server that is not being asked. They
+# are printed after the credential step, once settled, each with where it came
+# from.
 say "Cairn appliance preflight"
-say "realm     ${REALM:-<unset>}"
-say "dc        ${DC:-<unset>}"
-say "principal ${PRINCIPAL:-<unset>}"
-say "dhcp      ${DHCP_SERVERS:-<unset>}"
+say "The domain, the controller, the account and the DHCP servers are printed"
+say "once they are settled, after the credential step, with where each came from."
 say ""
 say "Read-only throughout. Nothing is collected, and the only thing sent"
 say "anywhere is which capabilities answered, to the portal, at the end."
@@ -723,8 +770,9 @@ capability_credential_source() {
       # the run says so, because a value silently coming from somewhere else
       # is the thing this whole change is against.
       PRINCIPAL="$portal_username"
-      [ -n "$portal_realm" ] && REALM="$portal_realm"
-      [ -n "$portal_controller" ] && DC="$portal_controller"
+      PRINCIPAL_FROM="the portal"
+      if [ -n "$portal_realm" ]; then REALM="$portal_realm"; REALM_FROM="the portal"; fi
+      if [ -n "$portal_controller" ]; then DC="$portal_controller"; DC_FROM="the portal"; fi
       FIELD_SOURCE="the portal"
 
       say ""
@@ -826,10 +874,18 @@ capability_credential_source || true
 # ---------------------------------------------------------------------------
 . "${HERE}/consent.sh"
 choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}" "$CREDENTIAL_SOURCE"
+say ""
+say "settled for this run:"
+script_line
+say "realm     ${REALM:-<unset>}${REALM:+ (from ${REALM_FROM})}"
+say "dc        ${DC:-<unset>}${DC:+ (from ${DC_FROM})}"
+say "principal ${PRINCIPAL:-<unset>}${PRINCIPAL:+ (from ${PRINCIPAL_FROM})}"
 if [ -n "$DHCP_SERVERS" ]; then
   say "dhcp      ${DHCP_SERVERS} (from ${DHCP_SERVERS_FROM})"
 elif [ -n "$DHCP_REFUSAL" ]; then
   say "dhcp      none asked: ${DHCP_REFUSAL}"
+else
+  say "dhcp      <unset>"
 fi
 say ""
 settle_consent
@@ -1016,7 +1072,160 @@ run_capability() {
 # ---------------------------------------------------------------------------
 # 1. Kerberos
 # ---------------------------------------------------------------------------
+# What a directory tool said, and which of the states it is. WO-1004-RS items 1
+# and 3: kinit and ldapsearch print a sentence when they fail, and the sentence
+# -- never the exit code -- is what says whether the domain answered. A refusal
+# is something the other end said; a string this script does not recognize is,
+# by definition, not something anybody was understood to say.
+
+# The line of a tool's output that says what happened: its own error line where
+# it printed one, otherwise its last line. Quoted into the reason the portal
+# stores, so a reader sees the tool's words rather than being sent to read
+# output nobody reading the portal can reach.
+tool_said() {
+  local said
+  said="$(printf '%s\n' "$1" | grep -m1 -E '^(kinit|ldap_[a-z_]+|SASL[^:]*|additional info): ' || true)"
+  if [ -z "$said" ]; then
+    said="$(printf '%s\n' "$1" | sed '/^[[:space:]]*$/d' | tail -n 1)"
+  fi
+  printf '%s' "${said:-it printed nothing}"
+}
+
+# ldapsearch's answer, as one of three words:
+#   refused  the directory or the KDC answered no: invalid credentials,
+#            insufficient access, stronger authentication or confidentiality
+#            required, unwilling to perform, or no such service principal;
+#   not-run  this host has no GSSAPI SASL mechanism, so nothing was attempted;
+#   untold   anything else, "Can't contact LDAP server" included: this run
+#            cannot tell a refusal from no answer.
+ldap_outcome() {
+  case "$1" in
+    *"No worthy mechs found"*|*"Unknown authentication method"*) printf 'not-run' ;;
+    *"Invalid credentials (49)"*|*"Insufficient access (50)"*|*"Strong(er) authentication required (8)"*|\
+    *"Confidentiality required (13)"*|*"Unwilling to perform (53)"*|*"Server not found in Kerberos database"*)
+      printf 'refused' ;;
+    *) printf 'untold' ;;
+  esac
+}
+
 rule "1. Kerberos"
+# What kinit's failure was: a refusal the domain gave, or something this run
+# cannot tell from one. Sets KINIT_VERDICT to refused or untold and prints the
+# verdict in Kerberos's own words. Its own function so kerberos-verdict-test.sh
+# can drive it with the sentences kinit prints, without a KDC or /dev/shm.
+kinit_failure() {
+  # What the KDC said, rather than a list of everything it might have meant.
+  #
+  # kinit distinguishes these and the first version of this message did not,
+  # printing "the account, the password or the clock" over an answer that had
+  # already named one of the three. A refusal that lists every possible cause
+  # sends somebody to check all of them, starting with whichever they thought
+  # of first.
+  #
+  # **Only an answer the KDC gave is a refusal.** WO-1004-RS item 1: every
+  # kinit failure this script did not recognize printed REFUSED -- "Cannot
+  # contact any KDC" included -- so a domain controller rebooting, a wrong DNS
+  # record or a firewall rule changed at lunchtime would have told a client
+  # their domain controller refused us. A refusal quotes Kerberos in its own
+  # words; no answer, or one this script does not recognize, is could not
+  # tell, quoted the same way.
+  local kinit_out="$1" said
+  KINIT_VERDICT=refused
+  said="$(tool_said "$kinit_out")"
+  case "$kinit_out" in
+
+    *"Password incorrect"*)
+      say "REFUSED: the domain answered that the password does not match. Kerberos said: ${said}"
+      say ""
+      say "  THIS IS A DEFINITE ANSWER, AND THREE THINGS ARE NOW PROVEN: the"
+      say "  realm is right, ${PRINCIPAL} exists, and the KDC is reachable and"
+      say "  replied. Only the password is wrong."
+      say ""
+      say "  STOP RATHER THAN RETRYING. Each attempt increments the lockout"
+      say "  counter on this account in the customer's own directory and writes"
+      say "  a failed-logon event to the domain controller. A password typed"
+      say "  twice more is a locked service account and a security alert"
+      say "  somebody has to answer for."
+      say ""
+      say "  Verify it away from here instead: sign in as ${PRINCIPAL} on a"
+      say "  domain-joined machine, or reset it deliberately on the DC and use"
+      say "  the value you set. It was read without echo, so a typo is"
+      say "  invisible -- check the length matches what you expect with"
+      say "  printf '%s' \"\${#CAIRN_PASSWORD}\" before trying again."
+      ;;
+
+    *"Clock skew"*|*"clock skew"*)
+      say "REFUSED: the domain answered that the clocks disagree by more than Kerberos allows. Kerberos said: ${said}"
+      say "  Five minutes is the limit. Neither the password nor the account is"
+      say "  implicated: this request never got as far as being judged."
+      say "  Compare 'timedatectl status' here with the clock on ${DC}."
+      ;;
+
+    *"not found in Kerberos database"*|*"Client not found"*)
+      say "REFUSED: the domain answered that it has no such principal as ${PRINCIPAL}. Kerberos said: ${said}"
+      say "  The realm answered, so this is the NAME rather than the domain."
+      say "  Check CAIRN_PRINCIPAL against the account's userPrincipalName, and"
+      say "  remember the part after the @ is the realm and is case-sensitive."
+      ;;
+
+    *"Password has expired"*|*"password has expired"*)
+      say "REFUSED: the domain answered that the password has expired. Kerberos said: ${said}"
+      say "  The password is correct and the domain will not issue on it."
+      say "  It has expired. A service account for this should be set not to"
+      say "  expire -- see LAB-BUILD.md section 2 -- which is a change to the"
+      say "  account rather than anything on this appliance."
+      ;;
+
+    *"credentials have been revoked"*)
+      say "REFUSED: the domain answered that this account is disabled or locked out. Kerberos said: ${said}"
+      say "  An administrator enables or unlocks it in the customer's directory."
+      ;;
+
+    *"Cannot contact any KDC"*|*"Cannot find KDC"*|*"Cannot resolve network address"*|*"Resource temporarily unavailable"*)
+      # **Could not tell, not not run.** Nothing answered: the domain said
+      # nothing about this account, so it is not a refusal, and the path to a
+      # domain controller is the network's -- a controller rebooting, a DNS
+      # record, a firewall -- not a fault in this box's software, which is what
+      # NOT RUN means.
+      KINIT_VERDICT=untold
+      say "COULD NOT TELL: no domain controller answered, so this run cannot tell whether the domain would accept this account. Kerberos said: ${said}"
+      say "  Check that ${DC:-the domain controller} is up and reachable from this box, and"
+      say "  that its name resolves here. Nothing about the account is implied."
+      ;;
+
+    *)
+      KINIT_VERDICT=untold
+      say "COULD NOT TELL: kinit failed with a message this script does not recognize, so it is not called a refusal. Kerberos said: ${said}"
+      say "  Its whole output is above. Kerberos refuses a request more than five"
+      say "  minutes out from the KDC, and that error does not always say so in"
+      say "  those words."
+      ;;
+  esac
+
+  # Name the likely cause when the likely cause is our own configuration.
+  #
+  # A realm written in lower case is the most common first-run failure here,
+  # and kinit answers it with "KDC reply did not match expectations" -- a
+  # sentence that names neither the realm nor its case. The KDC issues for the
+  # upper-case realm, the client asked for the lower-case one, and they do not
+  # match. Jackie hit exactly this on the first live run, 20 September 2026.
+  #
+  # It is reported as the first thing to check rather than as the cause: a
+  # lower-case realm is unusual and not illegal, so this must not become a
+  # confident wrong answer standing in front of a real password problem.
+  case "$REALM" in
+    *[a-z]*)
+      say ""
+      say "  CHECK THE REALM'S CASE FIRST. CAIRN_REALM is '${REALM}', which"
+      say "  contains lower case. Kerberos realms are case-sensitive and are"
+      say "  conventionally upper case, so a KDC that issues for"
+      say "  '$(printf '%s' "$REALM" | tr 'a-z' 'A-Z')' will not match a request"
+      say "  for '${REALM}'. Set CAIRN_REALM and the part of CAIRN_PRINCIPAL"
+      say "  after the @ in upper case, and leave host names in lower."
+      ;;
+  esac
+}
+
 capability_kerberos() {
   if [ -z "$PRINCIPAL" ] || [ -z "$REALM" ]; then
     say "NOT ASKED: CAIRN_PRINCIPAL or CAIRN_REALM is unset in ${SETTINGS}."
@@ -1200,7 +1409,7 @@ capability_kerberos() {
     tickets="$(klist 2>&1)"
     case "$tickets" in
       *"$PRINCIPAL"*)
-        say "FOUND: a ticket was issued for ${PRINCIPAL} and is readable."
+        say "ANSWERED: a ticket was issued for ${PRINCIPAL} and is readable."
         say "  cache: ${KRB5CCNAME}"
         say "  in RAM (tmpfs), private to root, removed when this script ends."
         printf '%s\n' "$tickets" | sed 's/^/  /'
@@ -1223,87 +1432,13 @@ capability_kerberos() {
     return 1
   fi
 
-  # What the KDC said, rather than a list of everything it might have meant.
-  #
-  # kinit distinguishes these and the first version of this message did not,
-  # printing "the account, the password or the clock" over an answer that had
-  # already named one of the three. A refusal that lists every possible cause
-  # sends somebody to check all of them, starting with whichever they thought
-  # of first.
-  case "$kinit_out" in
+  kinit_failure "$kinit_out"
 
-    *"Password incorrect"*)
-      say "REFUSED: the domain answered, and the password does not match."
-      say ""
-      say "  THIS IS A DEFINITE ANSWER, AND THREE THINGS ARE NOW PROVEN: the"
-      say "  realm is right, ${PRINCIPAL} exists, and the KDC is reachable and"
-      say "  replied. Only the password is wrong."
-      say ""
-      say "  STOP RATHER THAN RETRYING. Each attempt increments the lockout"
-      say "  counter on this account in the customer's own directory and writes"
-      say "  a failed-logon event to the domain controller. A password typed"
-      say "  twice more is a locked service account and a security alert"
-      say "  somebody has to answer for."
-      say ""
-      say "  Verify it away from here instead: sign in as ${PRINCIPAL} on a"
-      say "  domain-joined machine, or reset it deliberately on the DC and use"
-      say "  the value you set. It was read without echo, so a typo is"
-      say "  invisible -- check the length matches what you expect with"
-      say "  printf '%s' \"\${#CAIRN_PASSWORD}\" before trying again."
-      ;;
-
-    *"Clock skew"*|*"clock skew"*)
-      say "REFUSED: the clocks disagree by more than Kerberos allows."
-      say "  Five minutes is the limit. Neither the password nor the account is"
-      say "  implicated: this request never got as far as being judged."
-      say "  Compare 'timedatectl status' here with the clock on ${DC}."
-      ;;
-
-    *"not found in Kerberos database"*|*"Client not found"*)
-      say "REFUSED: the KDC has no such principal as ${PRINCIPAL}."
-      say "  The realm answered, so this is the NAME rather than the domain."
-      say "  Check CAIRN_PRINCIPAL against the account's userPrincipalName, and"
-      say "  remember the part after the @ is the realm and is case-sensitive."
-      ;;
-
-    *"Password has expired"*|*"password has expired"*)
-      say "REFUSED: the password is correct and the domain will not issue on it."
-      say "  It has expired. A service account for this should be set not to"
-      say "  expire -- see LAB-BUILD.md section 2 -- which is a change to the"
-      say "  account rather than anything on this appliance."
-      ;;
-
-    *)
-      say "REFUSED: no ticket. The account, the password or the clock is the cause."
-      say "  Kerberos refuses a request more than five minutes out from the KDC, and"
-      say "  the error does not say so in those words."
-      ;;
-  esac
-
-  # Name the likely cause when the likely cause is our own configuration.
-  #
-  # A realm written in lower case is the most common first-run failure here,
-  # and kinit answers it with "KDC reply did not match expectations" -- a
-  # sentence that names neither the realm nor its case. The KDC issues for the
-  # upper-case realm, the client asked for the lower-case one, and they do not
-  # match. Jackie hit exactly this on the first live run, 20 September 2026.
-  #
-  # It is reported as the first thing to check rather than as the cause: a
-  # lower-case realm is unusual and not illegal, so this must not become a
-  # confident wrong answer standing in front of a real password problem.
-  case "$REALM" in
-    *[a-z]*)
-      say ""
-      say "  CHECK THE REALM'S CASE FIRST. CAIRN_REALM is '${REALM}', which"
-      say "  contains lower case. Kerberos realms are case-sensitive and are"
-      say "  conventionally upper case, so a KDC that issues for"
-      say "  '$(printf '%s' "$REALM" | tr 'a-z' 'A-Z')' will not match a request"
-      say "  for '${REALM}'. Set CAIRN_REALM and the part of CAIRN_PRINCIPAL"
-      say "  after the @ in upper case, and leave host names in lower."
-      ;;
-  esac
-
-  REFUSED=$((REFUSED + 1))
+  if [ "$KINIT_VERDICT" = untold ]; then
+    UNTOLD=$((UNTOLD + 1))
+  else
+    REFUSED=$((REFUSED + 1))
+  fi
   return 1
 }
 # **The status is captured in the branch that runs on failure.** This read
@@ -1358,20 +1493,32 @@ capability_ldap() {
   printf '%s\n' "$out" | sed 's/^/  /'
 
   if [ $status -eq 0 ] && printf '%s\n' "$out" | grep -qi '^objectClass: domainDNS$'; then
-    say "FOUND: the directory answered a bound read of the domain object."
+    say "ANSWERED: the directory answered a bound read of the domain object."
     FOUND=$((FOUND + 1))
     return 0
   fi
 
+  # WO-1004-RS item 3: both of these printed REFUSED, the first for a read
+  # that completed and the second for any failure, "Can't contact LDAP server"
+  # included. A read that completed and returned something else is not the
+  # directory saying no; a failure is a refusal only where ldapsearch says the
+  # directory or the KDC answered no.
   if [ $status -eq 0 ]; then
-    say "REFUSED: the read completed but did not return the domain object's class,"
-    say "  so this is not evidence the bind can read the domain. The text above is"
-    say "  what came back."
-    REFUSED=$((REFUSED + 1))
+    say "COULD NOT TELL: the read completed and did not return the domain object's class,"
+    say "  so this is not evidence the bind can read the domain, and not a refusal"
+    say "  either. The text above is what came back."
+    UNTOLD=$((UNTOLD + 1))
     return 1
   fi
 
-  say "REFUSED: the bind or the read failed. The text above is the reason."
+  local said verdict
+  said="$(tool_said "$out")"
+  verdict="$(ldap_outcome "$out")"
+  case "$verdict" in
+    refused) say "REFUSED: the directory answered no to the bind or the read. ldapsearch said: ${said}" ;;
+    not-run) say "NOT RUN: this host has no GSSAPI SASL mechanism, so the bind was never attempted. ldapsearch said: ${said}" ;;
+    *) say "COULD NOT TELL: the bind or the read did not complete, and this run cannot tell a refusal from no answer. ldapsearch said: ${said}" ;;
+  esac
 
   # Name our own missing package rather than leaving the reader with a message
   # that names neither SASL nor a package.
@@ -1512,11 +1659,21 @@ capability_ldap() {
       ;;
   esac
 
-  REFUSED=$((REFUSED + 1))
+  case "$verdict" in
+    refused) REFUSED=$((REFUSED + 1)) ;;
+    not-run) NOTRUN=$((NOTRUN + 1)) ;;
+    *) UNTOLD=$((UNTOLD + 1)) ;;
+  esac
   return 1
 }
-run_capability ldap capability_ldap || true
-LDAP_OK=$?
+# **The status is captured in the branch that runs on failure**, the way the
+# Kerberos gate above has been since it was found broken: this read `|| true`
+# and then `LDAP_OK=$?`, which is the status of `true` -- always 0 -- so the
+# DNS-zone and authorized-server steps ran after a failed directory read as
+# though it had answered. Found by the WO-1004-RS item 3 sweep; latent, because
+# Active Directory is allowed nowhere and consent replaces all three steps.
+LDAP_OK=0
+run_capability ldap capability_ldap || LDAP_OK=$?
 
 # ---------------------------------------------------------------------------
 # 3. DNS held in the directory
@@ -1562,7 +1719,10 @@ capability_dns() {
     unasked_forest=1
   fi
 
-  local zones="" present=0 absent=0 could_not=0 container out status
+  local zones="" present=0 absent=0 could_not=0 refused_at=0 notrun_at=0 container out status said=""
+  # Each verdict quotes a place that gave that verdict: the first failure's words
+  # under REFUSED would put "Can't contact LDAP server" beside a refusal.
+  local refused_said="" notrun_said="" outcome
   for container in "${containers[@]}"; do
     say "looking under: ${container}"
     out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$container" \
@@ -1581,6 +1741,18 @@ capability_dns() {
         could_not=$((could_not + 1))
         printf '%s\n' "$out" | sed 's/^/  /'
         say "  COULD NOT BE ASKED: ldapsearch exited ${status}, which is not \"no such object\"."
+        outcome="$(ldap_outcome "$out")"
+        case "$outcome" in
+          refused)
+            refused_at=$((refused_at + 1))
+            [ -z "$refused_said" ] && refused_said="$(tool_said "$out")"
+            ;;
+          not-run)
+            notrun_at=$((notrun_at + 1))
+            [ -z "$notrun_said" ] && notrun_said="$(tool_said "$out")"
+            ;;
+        esac
+        [ -z "$said" ] && said="$(tool_said "$out")"
         ;;
     esac
   done
@@ -1596,11 +1768,28 @@ capability_dns() {
   local count
   count="$(printf '%s\n' "$zones" | grep -c . || true)"
 
+  # WO-1004-RS item 3: this printed REFUSED for any place that could not be
+  # read. It is a refusal only where the directory answered no for at least one
+  # of them; a missing GSSAPI mechanism is this host; anything else is could not
+  # tell. The forest root that could not be read from the rootDSE is counted in
+  # could_not and is neither.
   if [ $could_not -gt 0 ]; then
-    say "REFUSED: ${could_not} place(s) DNS zones can be kept could not be read, so"
-    say "  what follows is not the whole list: ${count} zone(s) read from ${present}."
+    if [ $refused_at -gt 0 ]; then
+      say "REFUSED: the directory answered no for ${refused_at} of the place(s) DNS zones can be kept. ldapsearch said: ${refused_said}"
+    elif [ $notrun_at -gt 0 ]; then
+      say "NOT RUN: this host has no GSSAPI SASL mechanism, so ${notrun_at} place(s) DNS zones can be kept were not asked. ldapsearch said: ${notrun_said}"
+    else
+      say "COULD NOT TELL: ${could_not} place(s) DNS zones can be kept could not be read, and this run cannot tell a refusal from no answer. ldapsearch said: ${said:-the forest root was not readable from the rootDSE}"
+    fi
+    say "  What follows is not the whole list: ${count} zone(s) read from ${present}."
     [ "$count" -gt 0 ] && printf '%s\n' "$zones" | sed 's/^/  /'
-    REFUSED=$((REFUSED + 1))
+    if [ $refused_at -gt 0 ]; then
+      REFUSED=$((REFUSED + 1))
+    elif [ $notrun_at -gt 0 ]; then
+      NOTRUN=$((NOTRUN + 1))
+    else
+      UNTOLD=$((UNTOLD + 1))
+    fi
     return 1
   fi
 
@@ -1612,7 +1801,7 @@ capability_dns() {
     return 1
   fi
 
-  say "FOUND: ${count} zone(s) readable in the directory, from ${present} of ${#containers[@]} place(s)."
+  say "ANSWERED: ${count} zone(s) readable in the directory, from ${present} of ${#containers[@]} place(s)."
   printf '%s\n' "$zones" | sed 's/^/  /'
   say "  What is correct for this site is not something preflight can know."
   FOUND=$((FOUND + 1))
@@ -1653,12 +1842,29 @@ capability_authorized_servers() {
           -s sub '(objectClass=dHCPClass)' dhcpServers name 2>&1)"
   local status=$?
 
+  # WO-1004-RS item 3: this printed REFUSED for any failure. It is a refusal
+  # only where the directory answered no.
   if [ $status -ne 0 ]; then
     printf '%s\n' "$out" | sed 's/^/  /'
-    say "REFUSED: the authorized-server list could not be read."
-    say "  This needs only an authenticated user, so a refusal here is a"
-    say "  different fact from the DHCP interface refusing below."
-    REFUSED=$((REFUSED + 1))
+    local said verdict
+    said="$(tool_said "$out")"
+    verdict="$(ldap_outcome "$out")"
+    case "$verdict" in
+      refused)
+        say "REFUSED: the directory answered no to reading the authorized-server list. ldapsearch said: ${said}"
+        say "  This needs only an authenticated user, so a refusal here is a"
+        say "  different fact from the DHCP interface refusing below."
+        REFUSED=$((REFUSED + 1))
+        ;;
+      not-run)
+        say "NOT RUN: this host has no GSSAPI SASL mechanism, so the list was never asked for. ldapsearch said: ${said}"
+        NOTRUN=$((NOTRUN + 1))
+        ;;
+      *)
+        say "COULD NOT TELL: the authorized-server list could not be read, and this run cannot tell a refusal from no answer. ldapsearch said: ${said}"
+        UNTOLD=$((UNTOLD + 1))
+        ;;
+    esac
     return 1
   fi
 
@@ -1690,7 +1896,7 @@ capability_authorized_servers() {
   local entries servers
   entries="$(printf '%s\n' "$out" | grep -c '^dn:' || true)"
   servers="$(printf '%s\n' "$out" | grep -c '^dhcpServers:' || true)"
-  say "FOUND: ${entries} entr(ies) under the container, ${servers} carrying a"
+  say "ANSWERED: ${entries} entr(ies) under the container, ${servers} carrying a"
   say "  dhcpServers attribute."
   printf '%s\n' "$out" | sed 's/^/  /' | head -40
   say ""
@@ -1910,6 +2116,8 @@ capability_dhcp() {
     mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
   fi
   local submitted=0 asked=0 empty=0 answered=0 refused=0 untold=0
+  # "1 of 1 DHCP server", "1 of 2 DHCP servers": the noun follows the number it counts.
+  local noun
   local scopes_seen=0 scopes_attempted=0 scopes_unreadable=0 scopes_empty=0
 
   # One read of one server: its output shown exactly as before, and what the
@@ -2041,6 +2249,8 @@ capability_dhcp() {
     esac
   done
 
+  if [ "$asked" -eq 1 ]; then noun="DHCP server"; else noun="DHCP servers"; fi
+
   # The scope counts, summed over the servers that printed them, for the run
   # report. Counts only: R20.
   CAP_SCOPES=""
@@ -2055,7 +2265,7 @@ capability_dhcp() {
   [ "$untold" -gt 0 ] && others="${others}; ${untold} could not be told apart from a server that did not answer"
 
   if [ "$submit" -eq 1 ]; then
-    CAP_NOTE="submitted to the portal from ${submitted} of ${asked} DHCP server(s)${others}"
+    CAP_NOTE="submitted to the portal from ${submitted} of ${asked} ${noun}${others}"
   else
     CAP_NOTE="probed on this box only; nothing was submitted, because CAIRN_DHCP_SUBMIT is not yes${others}"
     say ""
@@ -2073,9 +2283,9 @@ capability_dhcp() {
   fi
   if [ "$empty" -gt 0 ]; then
     say ""
-    say "EMPTY: ${empty} of ${asked} DHCP server(s) answered with every scope read and empty, so nothing was sent. That is a read, not a refusal."
+    say "EMPTY: ${empty} of ${asked} ${noun} answered with every scope read and empty, so nothing was sent. That is a read, not a refusal."
     if [ "$submit" -eq 1 ]; then
-      CAP_NOTE="${empty} of ${asked} DHCP server(s) answered with every scope read and empty, so nothing was sent${others}"
+      CAP_NOTE="${empty} of ${asked} ${noun} answered with every scope read and empty, so nothing was sent${others}"
     fi
     EMPTY=$((EMPTY + 1))
     return 0
@@ -2084,12 +2294,12 @@ capability_dhcp() {
     local untold_note=""
     [ "$untold" -gt 0 ] && untold_note=" ${untold} more could not be told apart from a server that did not answer."
     say ""
-    say "REFUSED: ${refused} of ${asked} DHCP server(s) answered ERROR_ACCESS_DENIED to the account reading them.${untold_note}"
+    say "REFUSED: ${refused} of ${asked} ${noun} answered ERROR_ACCESS_DENIED to the account reading them.${untold_note}"
     REFUSED=$((REFUSED + 1))
     return 1
   fi
   say ""
-  say "COULD NOT TELL: ${untold} of ${asked} DHCP server(s) did not complete the read, and this run cannot tell a refusal from a server that did not answer."
+  say "COULD NOT TELL: ${untold} of ${asked} ${noun} did not complete the read, and this run cannot tell a refusal from a server that did not answer."
   UNTOLD=$((UNTOLD + 1))
   return 1
 }
@@ -2270,24 +2480,10 @@ capability_relay() {
     return 1
   fi
 
-  local status=0
-  "$binary" -portal "${CAIRN_PORTAL}" -relay || status=$?
-  case "$status" in
-    0)
-      FOUND=$((FOUND + 1))
-      return 0
-      ;;
-    3)
-      say "NOT ASKED: no connection reads through this appliance; the reason is above."
-      UNASKED=$((UNASKED + 1))
-      return 1
-      ;;
-    *)
-      say "REFUSED: the relay stopped before the portal had no more work; the reason is above."
-      REFUSED=$((REFUSED + 1))
-      return 1
-      ;;
-  esac
+  # WO-1004-RS item 3: any exit but 0 and 3 printed REFUSED. read_reader reads
+  # what the binary said: the portal or a relayed system refusing in words is a
+  # refusal, quoted; anything else is could not tell.
+  read_reader "$binary" -relay "the relay" "reads to carry"
 }
 run_capability relay capability_relay || true
 
@@ -2414,22 +2610,12 @@ consent_report_json() {
 SCRIPT_JSON=""
 script_report_json() {
   SCRIPT_JSON=""
-  local commit changes why
-  if ! commit="$(git -C "$HERE" rev-parse HEAD 2>&1)" || ! printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
-    why="git could not say which commit this script is: $(printf '%s' "$commit" | head -n 1)"
-    SCRIPT_JSON="$(printf ',"script":{"state":"unknown","reason":"%s"}' "$(json_safe "$why")")"
+  script_identity
+  if [ "$SCRIPT_ID_STATE" = "unknown" ]; then
+    SCRIPT_JSON="$(printf ',"script":{"state":"unknown","reason":"%s"}' "$(json_safe "$SCRIPT_ID_REASON")")"
     return 0
   fi
-  if ! changes="$(git -C "$HERE" status --porcelain --untracked-files=no 2>&1)"; then
-    why="git could not say whether ${commit} has local changes: $(printf '%s' "$changes" | head -n 1)"
-    SCRIPT_JSON="$(printf ',"script":{"state":"unknown","reason":"%s"}' "$(json_safe "$why")")"
-    return 0
-  fi
-  if [ -z "$changes" ]; then
-    SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"clean"}' "$commit")"
-  else
-    SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"dirty"}' "$commit")"
-  fi
+  SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"%s"}' "$SCRIPT_ID_COMMIT" "$SCRIPT_ID_STATE")"
 }
 
 submit_run_report() {

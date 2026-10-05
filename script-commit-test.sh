@@ -43,6 +43,7 @@ lift() {
   printf '%s\n' "$body"
 }
 eval "$(lift json_safe)"
+eval "$(lift script_identity)"
 eval "$(lift script_report_json)"
 
 work="$(mktemp -d)"

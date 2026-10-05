@@ -110,7 +110,7 @@ case "$OUT" in *"NOT SUBMITTED"*) ok "the screen says nothing was submitted" ;; 
 CAIRN_DHCP_SUBMIT=yes
 run_step
 [ "$(head -n 1 "$calls")" = "-portal https://portal.example -collect-dhcp -server dhcp01.lab.example" ] && ok "with the setting, collect mode is called against the portal named" || bad "called: $(cat "$calls")"
-[ "$CAP_NOTE" = "submitted to the portal from 1 of 1 DHCP server(s)" ] && ok "the note counts what was submitted" || bad "note: $CAP_NOTE"
+[ "$CAP_NOTE" = "submitted to the portal from 1 of 1 DHCP server" ] && ok "the note counts what was submitted" || bad "note: $CAP_NOTE"
 grep -Eq "^[0-9T:Z-]+ dhcp01\.lab\.example sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\$" "$SUBMISSIONS_LOG" && ok "the submission digest is kept on the box, with the time and the server" || bad "kept: $(cat "$SUBMISSIONS_LOG" 2>&1)"
 type keep_submission_digest >/dev/null 2>&1 && ok "the digest keeper was lifted, so its absence would fail here" || bad "keep_submission_digest is not defined"
 [ "$EMPTY" -eq 0 ] && ok "a read that sent leases is not counted empty" || bad "empty: $EMPTY"
@@ -125,13 +125,13 @@ run_step
 [ "$FOUND" -eq 0 ] && [ "$EMPTY" -eq 1 ] && [ "$UNTOLD" -eq 0 ] && ok "it is counted as empty, on its own" || bad "found: $FOUND, empty: $EMPTY, untold: $UNTOLD"
 # WO-1004-M item 3: the counts, and only the counts, go up with the run.
 [ "$CAP_SCOPES" = '{"attempted":1,"unreadable":0,"empty":1}' ] && ok "the scope counts are carried for the run report" || bad "scopes: $CAP_SCOPES"
-case "$OUT" in *"EMPTY: 1 of 1 DHCP server(s) answered with every scope read and empty, so nothing was sent."*) ok "the line the report stores says what was read" ;; *) bad "printed: $OUT" ;; esac
+case "$OUT" in *"EMPTY: 1 of 1 DHCP server answered with every scope read and empty, so nothing was sent."*) ok "the line the report stores says what was read" ;; *) bad "printed: $OUT" ;; esac
 case "$OUT" in *"this server refused"*) bad "the screen calls an empty scope a refusal: $OUT" ;; *) ok "the screen does not say refused" ;; esac
 case "$OUT" in *"That is a read, not a refusal."*) ok "the screen says it was a read" ;; *) bad "printed: $OUT" ;; esac
 case "$OUT" in *"NOT KEPT"*) bad "a read that sent nothing reports a digest missing: $OUT" ;; *) ok "no missing digest is reported when nothing was sent" ;; esac
 case "$OUT" in *"nothing was submitted from dhcp01.lab.example, so there is no submission digest to keep."*) ok "the absent digest is said as a non-event" ;; *) bad "printed: $OUT" ;; esac
 [ ! -s "$SUBMISSIONS_LOG" ] && ok "and nothing is written to the digest log" || bad "kept: $(cat "$SUBMISSIONS_LOG")"
-[ "$CAP_NOTE" = "1 of 1 DHCP server(s) answered with every scope read and empty, so nothing was sent" ] && ok "the note says why nothing was sent" || bad "note: $CAP_NOTE"
+[ "$CAP_NOTE" = "1 of 1 DHCP server answered with every scope read and empty, so nothing was sent" ] && ok "the note says why nothing was sent" || bad "note: $CAP_NOTE"
 
 # A server serving no scopes exits 0 and says so: an empty answer, not leases.
 export STUB_MODE=noscopes
@@ -143,7 +143,7 @@ run_step
 export STUB_MODE=partial
 run_step
 [ "$EMPTY" -eq 0 ] && [ "$REFUSED" -eq 0 ] && [ "$UNTOLD" -eq 1 ] && ok "an incomplete read is could not tell, never empty and never refused" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED, untold: $UNTOLD"
-case "$OUT" in *"COULD NOT TELL: 1 of 1 DHCP server(s) did not complete the read"*) ok "and the line the report stores says it cannot tell" ;; *) bad "printed: $OUT" ;; esac
+case "$OUT" in *"COULD NOT TELL: 1 of 1 DHCP server did not complete the read"*) ok "and the line the report stores says it cannot tell" ;; *) bad "printed: $OUT" ;; esac
 [ "$CAP_SCOPES" = '{"attempted":2,"unreadable":1,"empty":1}' ] && ok "and the scope counts still go up" || bad "scopes: $CAP_SCOPES"
 
 # The server said no.
@@ -151,7 +151,7 @@ export STUB_MODE=denied
 run_step
 [ "$REFUSED" -eq 1 ] && [ "$FOUND" -eq 0 ] && [ "$UNTOLD" -eq 0 ] && ok "ERROR_ACCESS_DENIED is counted as a refusal" || bad "found: $FOUND, refused: $REFUSED, untold: $UNTOLD"
 case "$OUT" in *"this server refused (ERROR_ACCESS_DENIED)"*) ok "and the screen says refused" ;; *) bad "printed: $OUT" ;; esac
-case "$OUT" in *"REFUSED: 1 of 1 DHCP server(s) answered ERROR_ACCESS_DENIED"*) ok "and the line the report stores says who said what, naming no server" ;; *) bad "printed: $OUT" ;; esac
+case "$OUT" in *"REFUSED: 1 of 1 DHCP server answered ERROR_ACCESS_DENIED"*) ok "and the line the report stores says who said what, naming no server" ;; *) bad "printed: $OUT" ;; esac
 printf '%s\n' "$OUT" | grep '^REFUSED:' | grep -q 'dhcp01' && bad "the stored line names the server: $OUT" || ok "the stored line names no server"
 
 # The read failed with no word from the server: could not tell, its own count.

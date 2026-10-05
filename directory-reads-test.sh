@@ -47,6 +47,8 @@ lift() {
   fi
   printf '%s\n' "$body"
 }
+eval "$(lift tool_said)"
+eval "$(lift ldap_outcome)"
 eval "$(lift capability_ldap)"
 eval "$(lift capability_dns)"
 
@@ -82,7 +84,7 @@ ROOTDSE="|0|dn:\nrootDomainNamingContext: ${FOREST}"
 
 run() { # function, then prints the state line
   OUT="$(mktemp)"
-  FOUND=0 REFUSED=0 UNASKED=0 KERBEROS_OK=0 LDAP_OK=0 DC="dc.example.com"
+  FOUND=0 REFUSED=0 UNASKED=0 UNTOLD=0 NOTRUN=0 EMPTY=0 KERBEROS_OK=0 LDAP_OK=0 DC="dc.example.com"
   # Everything the function prints is kept: the zone list goes to stdout and the
   # verdicts through say, and a test that dropped either would read half a run.
   "$1" >> "$OUT" 2>&1
@@ -99,9 +101,27 @@ run capability_ldap
 
 LDAP_TABLE="${BASE_DN}|0|dn: ${BASE_DN}"
 run capability_ldap
-[ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && [ $FOUND -eq 0 ] \
-  && pass "a read that exits 0 and returns no domain object is not called an answer" \
+[ $STATUS -ne 0 ] && [ $UNTOLD -eq 1 ] && [ $REFUSED -eq 0 ] && [ $FOUND -eq 0 ] \
+  && pass "a read that exits 0 and returns no domain object is COULD NOT TELL, neither an answer nor a refusal" \
   || fail "a bare dn: line was reported as the directory answering: $(cat "$OUT")"
+
+LDAP_TABLE="${BASE_DN}|49|ldap_sasl_interactive_bind: Invalid credentials (49)\n\tadditional info: 80090308: LdapErr"
+run capability_ldap
+[ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && [ $UNTOLD -eq 0 ] && grep -q 'Invalid credentials (49)' "$OUT" \
+  && pass "a bind the directory refused is REFUSED, in ldapsearch's own words" \
+  || fail "a refused bind was not REFUSED in the tool's words: $(cat "$OUT")"
+
+LDAP_TABLE="${BASE_DN}|255|ldap_sasl_interactive_bind: Can't contact LDAP server (-1)"
+run capability_ldap
+[ $STATUS -ne 0 ] && [ $UNTOLD -eq 1 ] && [ $REFUSED -eq 0 ] && ! grep -q 'REFUSED' "$OUT" \
+  && pass "no answer from the directory is COULD NOT TELL, never REFUSED" \
+  || fail "a directory that did not answer was printed as a refusal: $(cat "$OUT")"
+
+LDAP_TABLE="${BASE_DN}|255|ldap_sasl_interactive_bind: Unknown authentication method (-6)\n\tadditional info: SASL(-4): no mechanism available: No worthy mechs found"
+run capability_ldap
+[ $STATUS -ne 0 ] && [ $NOTRUN -eq 1 ] && [ $REFUSED -eq 0 ] && [ $UNTOLD -eq 0 ] \
+  && pass "a host with no GSSAPI mechanism is NOT RUN, a fact about this box" \
+  || fail "a missing SASL mechanism was charged to the directory: $(cat "$OUT")"
 
 # --- the DNS zones check ------------------------------------------------------
 
@@ -119,8 +139,8 @@ fi
 LDAP_TABLE="${ROOTDSE}
 ${DOMAIN_ZONES}|255|ldap_sasl_interactive_bind: Can't contact LDAP server (-1)"
 run capability_dns
-if [ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && ! grep -q 'NOT PRESENT' "$OUT"; then
-  pass "a read that failed for a reason other than no-such-object is REFUSED, never NOT PRESENT"
+if [ $STATUS -ne 0 ] && [ $UNTOLD -eq 1 ] && [ $REFUSED -eq 0 ] && ! grep -q 'NOT PRESENT' "$OUT"; then
+  pass "a place that did not answer is COULD NOT TELL, never REFUSED and never NOT PRESENT"
 else
   fail "a failed read was reported as a site without directory DNS: $(cat "$OUT")"
 fi
@@ -136,10 +156,31 @@ fi
 LDAP_TABLE="|1|ldap_search_ext: Operations error (1)
 ${DOMAIN_ZONES}|0|dn: DC=child.example.com,${DOMAIN_ZONES}\ndc: child.example.com"
 run capability_dns
-if [ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && grep -q 'ForestDnsZones partition was not looked in' "$OUT"; then
+if [ $STATUS -ne 0 ] && [ $UNTOLD -eq 1 ] && [ $REFUSED -eq 0 ] && grep -q 'ForestDnsZones partition was not looked in' "$OUT"; then
   pass "an unreadable forest root leaves the forest partition unasked and says so"
 else
   fail "the forest partition was skipped silently when the root could not be read: $(cat "$OUT")"
+fi
+
+LDAP_TABLE="${ROOTDSE}
+${DOMAIN_ZONES}|50|ldap_search_ext: Insufficient access (50)"
+run capability_dns
+if [ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && [ $UNTOLD -eq 0 ] && grep -q 'Insufficient access (50)' "$OUT"; then
+  pass "a place the directory refused to show is REFUSED, in ldapsearch's own words"
+else
+  fail "a refused zone read was not REFUSED in the tool's words: $(cat "$OUT")"
+fi
+
+LDAP_TABLE="${ROOTDSE}
+${DOMAIN_ZONES}|255|ldap_sasl_interactive_bind: Can't contact LDAP server (-1)
+${LEGACY_ZONES}|50|ldap_search_ext: Insufficient access (50)"
+run capability_dns
+verdict_line="$(grep -m1 '^REFUSED:' "$OUT" || true)"
+if [ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && printf '%s' "$verdict_line" | grep -q 'Insufficient access (50)' \
+   && ! printf '%s' "$verdict_line" | grep -q "Can't contact"; then
+  pass "a refusal after a place that did not answer quotes the refusal, not the silence before it"
+else
+  fail "the REFUSED line quoted a place that did not refuse: $(cat "$OUT")"
 fi
 
 echo

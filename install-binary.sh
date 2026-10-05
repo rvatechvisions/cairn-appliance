@@ -3,7 +3,6 @@
 # Install a binary the portal published, carried here by a person.
 #
 #   sudo ./install-binary.sh <file> <sha256 published by the portal>
-#   The portal prints this command whole for staff, with the digest already in it.
 #
 # ## Why this is the install path
 #
@@ -77,9 +76,8 @@ verify_and_install() {
   say "the file you carried:       ${actual}"
   if [ "$actual" != "$expected" ]; then
     refuse_install "$target" "THE FILE DOES NOT MATCH THE DIGEST YOU GAVE.
-  Either the digest is not the one the portal published -- copy the command from
-  the collector card, which carries it -- or the file is not the binary the
-  portal offers, or it was damaged on the way. Do not run it."
+  Either the digest is not the one the portal published, or the file is not the
+  binary the portal offers, or it was damaged on the way. Do not run it."
     return 1
   fi
   say "they match."
@@ -149,7 +147,6 @@ verify_and_install() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ "$#" -ne 2 ]; then
     say "usage: sudo ./install-binary.sh <file> <sha256 published by the portal>"
-    say "       the portal prints this command whole for staff, with the digest already in it"
     exit 2
   fi
   if [ "$(id -u)" -ne 0 ]; then

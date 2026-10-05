@@ -49,9 +49,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FOUND=0
 REFUSED=0
 UNASKED=0
-# Capabilities counted in FOUND whose read finished and held nothing. A read,
-# not a refusal; counted apart so the tally can say so. WO-1004-L item 2.
+# Capabilities whose read finished and held nothing. A read, not a refusal.
+# WO-1004-L item 2 counted these inside FOUND and labeled them; WO-1004-M item 6
+# gives them their own state in the run report, so they are their own count.
 EMPTY=0
+
+# Capabilities where this run cannot tell a refusal from no answer. WO-1004-M
+# item 1: these were counted with the refusals, and a count that adds a refusal
+# to an unknown has two populations in one number. A refusal is something the
+# other end said; this is something about us.
+UNTOLD=0
 
 # Where this run's credential came from, said on its own line and never counted
 # as a capability. WO-1004-L item 2: step 0 was counted in FOUND, so a run that
@@ -876,9 +883,12 @@ json_safe() {
 # difference would otherwise disappear.
 first_reason() {
   local log="$1" line
-  line="$(grep -m1 -E '^(REFUSED|NOT ASKED|NOT RUN|PARTLY):' "$log" 2>/dev/null || true)"
+  line="$(grep -m1 -E '^(REFUSED|NOT ASKED|NOT RUN|COULD NOT TELL|PARTLY):' "$log" 2>/dev/null || true)"
   if [ -z "$line" ]; then
-    printf '%s' "this run did not record a reason; read the appliance output"
+    # WO-1004-M item 3: this told a reader of the portal to read the appliance
+    # output, which nobody reading the portal can reach. A step that recorded
+    # no reason is a fault in this script, and that is what is said.
+    printf '%s' "preflight.sh recorded no reason for this step, which is a fault in the script and says nothing about your network"
     return 0
   fi
   printf '%s' "${line#*: }"
@@ -917,12 +927,16 @@ run_capability() {
     fn=step_not_consented
   fi
   local before_found=$FOUND before_refused=$REFUSED before_unasked=$UNASKED before_notrun=$NOTRUN
+  local before_empty=$EMPTY before_untold=$UNTOLD
   local log state reason status
 
   # A qualification on an answer, set by the capability that gave it. The
   # portal stores it as the capability's note: a note qualifies a capability
   # that answered, and a reason belongs to one that did not. WO-1001-A item 1.
   CAP_NOTE=""
+  # The scope counts a DHCP read printed, as a JSON object, or empty. Counts
+  # only, R20. WO-1004-M item 3.
+  CAP_SCOPES=""
 
   log="$(mktemp)"
 
@@ -953,8 +967,16 @@ run_capability() {
   elif [ "$FOUND" -gt "$before_found" ]; then
     state="reached"
     reason=""
+  elif [ "$EMPTY" -gt "$before_empty" ]; then
+    # An answer with nothing in it: carries its note, like reached. WO-1004-M item 6.
+    state="empty"
+    reason=""
   elif [ "$REFUSED" -gt "$before_refused" ]; then
     state="refused"
+    reason="$(first_reason "$log")"
+  elif [ "$UNTOLD" -gt "$before_untold" ]; then
+    # Never folded into refused. WO-1004-M item 1.
+    state="could-not-tell"
     reason="$(first_reason "$log")"
   elif [ "$UNASKED" -gt "$before_unasked" ]; then
     state="not-asked"
@@ -970,13 +992,16 @@ run_capability() {
 
   rm -f "$log"
 
-  local entry
+  local entry scopes_json=""
+  if [ -n "$CAP_SCOPES" ]; then
+    scopes_json=",\"scopes\":${CAP_SCOPES}"
+  fi
   if [ -n "$reason" ]; then
-    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"reason\":\"$(json_safe "$reason")\"}"
-  elif [ "$state" = "reached" ] && [ -n "$CAP_NOTE" ]; then
-    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"note\":\"$(json_safe "$CAP_NOTE")\"}"
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"reason\":\"$(json_safe "$reason")\"${scopes_json}}"
+  elif { [ "$state" = "reached" ] || [ "$state" = "empty" ]; } && [ -n "$CAP_NOTE" ]; then
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"note\":\"$(json_safe "$CAP_NOTE")\"${scopes_json}}"
   else
-    entry="{\"name\":\"${name}\",\"state\":\"${state}\"}"
+    entry="{\"name\":\"${name}\",\"state\":\"${state}\"${scopes_json}}"
   fi
 
   if [ -z "$CAP_JSON" ]; then
@@ -1186,11 +1211,15 @@ capability_kerberos() {
         ;;
     esac
 
-    say "REFUSED: kinit reported success and the cache holds no usable ticket."
-    say "  This is not a refusal by the domain -- the request was accepted."
+    # WO-1004-M item 2: this printed REFUSED over a sentence saying it was not
+    # a refusal by the domain. The domain accepted the request; the ticket did
+    # not reach a cache this box can use, which is a fault on this box, and that
+    # is NOT RUN -- could-not-run in the report -- never a refusal.
+    say "NOT RUN: kinit reported success and the cache holds no usable ticket; that is a fault on this box, not a refusal by the domain."
+    say "  The domain accepted the request."
     say "  What klist says about ${KRB5CCNAME}:"
     printf '%s\n' "$tickets" | sed 's/^/  /'
-    REFUSED=$((REFUSED + 1))
+    NOTRUN=$((NOTRUN + 1))
     return 1
   fi
 
@@ -1880,17 +1909,21 @@ capability_dhcp() {
     submit=1
     mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
   fi
-  local submitted=0 asked=0 empty=0 answered=0
+  local submitted=0 asked=0 empty=0 answered=0 refused=0 untold=0
+  local scopes_seen=0 scopes_attempted=0 scopes_unreadable=0 scopes_empty=0
 
   # One read of one server: its output shown exactly as before, and what the
   # server's answer WAS, set in DHCP_READ -- one of four, WO-1004-L item 1:
   #
-  #   answered  the binary finished: it read, and submitted if asked to;
-  #   empty     every scope it attempted was read to the end and held no
-  #             lease, so there was nothing to send -- a successful read;
-  #   refused   the server answered ERROR_ACCESS_DENIED;
-  #   failed    anything else. This run cannot tell a refusal from a server
-  #             that did not answer, and says so rather than choosing.
+  #   answered        the binary finished and sent what it read, if asked to;
+  #   empty           every scope it attempted was read to the end and held no
+  #                   lease, or it serves none -- nothing to send, and a read;
+  #   refused         the server answered ERROR_ACCESS_DENIED;
+  #   could-not-tell  anything else. This run cannot tell a refusal from a
+  #                   server that did not answer, and says so rather than
+  #                   choosing -- and, WO-1004-M item 1, counts it as that, never
+  #                   with the refusals. A refusal is something the other end
+  #                   said; this is something about us.
   #
   # **An empty scope is not a refusal.** In collect mode the binary exits
   # non-zero when it found no lease to send, and that exit used to be read as
@@ -1899,7 +1932,14 @@ capability_dhcp() {
   # own counts on two fixed lines, and those are read here: every scope
   # attempted, none unreadable, every one empty, and no device or unreadable
   # lease. Read from this script's own binary, whose format is ours, and when
-  # the lines are not there the read is FAILED, never EMPTY and never REFUSED.
+  # the lines are not there the read is could-not-tell, never empty and never
+  # refused. A server that serves no scopes at all exits 0 and says so in its
+  # own sentence, which is an empty answer too, not one with leases in it.
+  #
+  # **The scope counts are kept, and only the counts.** WO-1004-M item 3: they
+  # are what lets the portal say what a read found, and R20 allows counts and
+  # nothing that names a scope. The "scopes:" line is the binary's; the lines
+  # under it name scopes, and are never read into anything that leaves.
   #
   # The digest is kept only when the binary printed one. Its absence after a
   # read that sent nothing is not a problem and is said as what it is.
@@ -1911,7 +1951,16 @@ capability_dhcp() {
     sed 's/^/  /' "$output"
     scopes="$(grep -m 1 '^scopes: ' "$output")"
     devices="$(grep -m 1 '^devices: ' "$output")"
-    if [ "$status" -eq 0 ]; then
+    if [[ "$scopes" =~ ^scopes:\ ([0-9]+)\ attempted,\ ([0-9]+)\ could\ not\ be\ read\ completely,\ ([0-9]+)\ empty$ ]]; then
+      scopes_seen=1
+      scopes_attempted=$((scopes_attempted + BASH_REMATCH[1]))
+      scopes_unreadable=$((scopes_unreadable + BASH_REMATCH[2]))
+      scopes_empty=$((scopes_empty + BASH_REMATCH[3]))
+    fi
+    if [ "$status" -eq 0 ] && grep -q '^the server answered and serves no scopes' "$output"; then
+      scopes_seen=1
+      DHCP_READ="empty"
+    elif [ "$status" -eq 0 ]; then
       DHCP_READ="answered"
     elif [[ "$scopes" =~ ^scopes:\ ([1-9][0-9]*)\ attempted,\ 0\ could\ not\ be\ read\ completely,\ ([0-9]+)\ empty$ ]] \
          && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] \
@@ -1920,7 +1969,7 @@ capability_dhcp() {
     elif grep -q 'ERROR_ACCESS_DENIED' "$output"; then
       DHCP_READ="refused"
     else
-      DHCP_READ="failed"
+      DHCP_READ="could-not-tell"
     fi
     if [ "$submit" -eq 1 ]; then
       if grep -q 'body SHA-256' "$output" || [ "$DHCP_READ" = "answered" ]; then
@@ -1964,7 +2013,6 @@ capability_dhcp() {
     dhcp_read "$server" || true
     case "$DHCP_READ" in
       answered)
-        any_found=1
         answered=$((answered + 1))
         if [ "$submit" -eq 1 ]; then
           submitted=$((submitted + 1))
@@ -1974,7 +2022,6 @@ capability_dhcp() {
         # A successful read that found nothing to send. Kept out of the refusal
         # count: it is evidence that nobody holds a lease on this server today,
         # and about nothing else.
-        any_found=1
         empty=$((empty + 1))
         say "  this server answered: every scope it serves was read and is empty. That is a read, not a refusal."
         ;;
@@ -1983,38 +2030,129 @@ capability_dhcp() {
         # mapper resolved, the interface bound, Kerberos authenticated and the
         # call was dispatched. Calling that silence would report a working DHCP
         # service as unreachable and send somebody to look at the network.
+        refused=$((refused + 1))
         say "  this server refused (ERROR_ACCESS_DENIED). The others are still being asked."
         ;;
       *)
+        untold=$((untold + 1))
         say "  this server did not complete the read, in the binary's words above. This run cannot tell a"
-        say "  refusal from a server that did not answer, and counts it with the refusals rather than guess."
+        say "  refusal from a server that did not answer, and counts it as that: could not tell."
         ;;
     esac
   done
 
+  # The scope counts, summed over the servers that printed them, for the run
+  # report. Counts only: R20.
+  CAP_SCOPES=""
+  if [ "$scopes_seen" -eq 1 ]; then
+    CAP_SCOPES="$(printf '{"attempted":%d,"unreadable":%d,"empty":%d}' "$scopes_attempted" "$scopes_unreadable" "$scopes_empty")"
+  fi
+
+  # What the other servers said, beside the answer the capability reports.
+  local others=""
+  [ "$empty" -gt 0 ] && [ "$answered" -gt 0 ] && others="${others}; ${empty} answered with every scope empty, so nothing was sent from them"
+  [ "$refused" -gt 0 ] && others="${others}; ${refused} refused (ERROR_ACCESS_DENIED)"
+  [ "$untold" -gt 0 ] && others="${others}; ${untold} could not be told apart from a server that did not answer"
+
   if [ "$submit" -eq 1 ]; then
-    CAP_NOTE="submitted to the portal from ${submitted} of ${asked} DHCP server(s)"
-    if [ "$empty" -gt 0 ]; then
-      CAP_NOTE="${CAP_NOTE}; ${empty} answered with every scope empty, so nothing was sent from them"
-    fi
+    CAP_NOTE="submitted to the portal from ${submitted} of ${asked} DHCP server(s)${others}"
   else
-    CAP_NOTE="probed on this box only; nothing was submitted, because CAIRN_DHCP_SUBMIT is not yes"
+    CAP_NOTE="probed on this box only; nothing was submitted, because CAIRN_DHCP_SUBMIT is not yes${others}"
     say ""
     say "NOT SUBMITTED: this box is held on the probe. What was read above stays on this box."
   fi
 
-  if [ "$any_found" -eq 1 ]; then
+  # The capability's own answer, from the servers' answers: one that answered
+  # with data, then one that answered empty, then a refusal, then could not
+  # tell. Each prints the line the run report stores, and none names a server:
+  # the portal named them, and a host name going up is an identifier it does
+  # not need. WO-1004-M items 1 and 3.
+  if [ "$answered" -gt 0 ]; then
     FOUND=$((FOUND + 1))
-    if [ "$answered" -eq 0 ]; then
-      EMPTY=$((EMPTY + 1))
-    fi
     return 0
   fi
-
-  REFUSED=$((REFUSED + 1))
+  if [ "$empty" -gt 0 ]; then
+    say ""
+    say "EMPTY: ${empty} of ${asked} DHCP server(s) answered with every scope read and empty, so nothing was sent. That is a read, not a refusal."
+    if [ "$submit" -eq 1 ]; then
+      CAP_NOTE="${empty} of ${asked} DHCP server(s) answered with every scope read and empty, so nothing was sent${others}"
+    fi
+    EMPTY=$((EMPTY + 1))
+    return 0
+  fi
+  if [ "$refused" -gt 0 ]; then
+    local untold_note=""
+    [ "$untold" -gt 0 ] && untold_note=" ${untold} more could not be told apart from a server that did not answer."
+    say ""
+    say "REFUSED: ${refused} of ${asked} DHCP server(s) answered ERROR_ACCESS_DENIED to the account reading them.${untold_note}"
+    REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+  say ""
+  say "COULD NOT TELL: ${untold} of ${asked} DHCP server(s) did not complete the read, and this run cannot tell a refusal from a server that did not answer."
+  UNTOLD=$((UNTOLD + 1))
   return 1
 }
 run_capability dhcp capability_dhcp || true
+
+# A reader's answer, from what the binary SAID rather than its exit status.
+# WO-1004-M item 2: a refusal is something the other end said; an exit code is
+# something our process did. Zabbix, vSphere, Configuration Manager and
+# Proxmox VE all exit 1 for an empty list, a refusal and a failure alike, and
+# all four printed REFUSED for every one of them.
+#
+# Read from this repository's own binary, whose sentences are ours:
+#
+#   exit 0                      answered
+#   exit 3                      not asked: nothing was asked of anybody
+#   "... listed no ..., so nothing was sent"
+#                               empty: it answered, and there was nothing to send
+#   "... refused ..."           refused: the other end said no, in its words
+#   anything else               could not tell: a failure this run cannot tell
+#                               from a refusal, said as that
+#
+# The binary's own last line is the stored reason, without its prefix, so a
+# reader of the portal sees what happened rather than being sent to read
+# output nobody can reach (WO-1004-M item 3).
+#
+# $1 the binary, $2 its collect flag, $3 who was asked ("the Zabbix server"),
+# $4 what an answer lists ("hosts").
+read_reader() {
+  local binary="$1" flag="$2" who="$3" what="$4" output status=0 said
+  output="$(mktemp)"
+  "$binary" -portal "${CAIRN_PORTAL}" "$flag" >"$output" 2>&1 || status=$?
+  cat "$output"
+  said="$(grep '^preflight: ' "$output" | tail -n 1)"
+  said="${said#preflight: }"
+  rm -f "$output"
+  if [ "$status" -eq 0 ]; then
+    FOUND=$((FOUND + 1))
+    return 0
+  fi
+  if [ "$status" -eq 3 ]; then
+    say "NOT ASKED: the binary asked ${who} nothing; ${said:-it gave no reason}"
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  case "$said" in
+    *"listed no "*", so nothing was sent")
+      say "EMPTY: ${who} answered and listed no ${what}, so nothing was sent. That is a read, not a refusal."
+      CAP_NOTE="$said"
+      EMPTY=$((EMPTY + 1))
+      return 0
+      ;;
+    *" refused "*)
+      say "REFUSED: ${said}"
+      REFUSED=$((REFUSED + 1))
+      return 1
+      ;;
+    *)
+      say "COULD NOT TELL: ${who} did not answer with ${what}, and this run cannot tell a refusal from no answer: ${said:-the binary gave no reason}"
+      UNTOLD=$((UNTOLD + 1))
+      return 1
+      ;;
+  esac
+}
 
 # ---------------------------------------------------------------------------
 # Zabbix: the hosts of an existing Zabbix server, WO-0928-F item 5a.
@@ -2023,9 +2161,9 @@ run_capability dhcp capability_dhcp || true
 # signed request, and holds them in memory for one host.get -- they never pass
 # through this shell. It needs no Kerberos ticket and reads no directory data.
 #
-# Its exit status carries the three states: 0 found, 3 NOT ASKED (Zabbix not
-# granted, no server named, or the credential could not be fetched -- none of
-# them the Zabbix server saying anything), anything else REFUSED.
+# Exit 0 is found and 3 is NOT ASKED (Zabbix not granted, no server named, or
+# the credential could not be fetched -- none of them the Zabbix server saying
+# anything). Anything else is read from what the binary said: see read_reader.
 capability_zabbix() {
   local binary="${HERE}/preflight/preflight"
   if [ ! -x "$binary" ]; then
@@ -2039,24 +2177,7 @@ capability_zabbix() {
     return 1
   fi
 
-  local status=0
-  "$binary" -portal "${CAIRN_PORTAL}" -collect-zabbix || status=$?
-  case "$status" in
-    0)
-      FOUND=$((FOUND + 1))
-      return 0
-      ;;
-    3)
-      say "NOT ASKED: the binary asked no Zabbix server anything; its reason is above."
-      UNASKED=$((UNASKED + 1))
-      return 1
-      ;;
-    *)
-      say "REFUSED: the Zabbix server was asked and did not answer with hosts; the reason is above."
-      REFUSED=$((REFUSED + 1))
-      return 1
-      ;;
-  esac
+  read_reader "$binary" -collect-zabbix "the Zabbix server" "hosts"
 }
 run_capability zabbix capability_zabbix || true
 
@@ -2078,24 +2199,7 @@ capability_vsphere() {
     return 1
   fi
 
-  local status=0
-  "$binary" -portal "${CAIRN_PORTAL}" -collect-vsphere || status=$?
-  case "$status" in
-    0)
-      FOUND=$((FOUND + 1))
-      return 0
-      ;;
-    3)
-      say "NOT ASKED: the binary asked no vCenter anything; its reason is above."
-      UNASKED=$((UNASKED + 1))
-      return 1
-      ;;
-    *)
-      say "REFUSED: vCenter was asked and did not answer with virtual machines; the reason is above."
-      REFUSED=$((REFUSED + 1))
-      return 1
-      ;;
-  esac
+  read_reader "$binary" -collect-vsphere "vCenter" "virtual machines"
 }
 run_capability vsphere capability_vsphere || true
 
@@ -2118,24 +2222,7 @@ capability_mecm() {
     return 1
   fi
 
-  local status=0
-  "$binary" -portal "${CAIRN_PORTAL}" -collect-mecm || status=$?
-  case "$status" in
-    0)
-      FOUND=$((FOUND + 1))
-      return 0
-      ;;
-    3)
-      say "NOT ASKED: the binary asked no Configuration Manager site anything; its reason is above."
-      UNASKED=$((UNASKED + 1))
-      return 1
-      ;;
-    *)
-      say "REFUSED: the Configuration Manager site was asked and did not answer with systems; the reason is above."
-      REFUSED=$((REFUSED + 1))
-      return 1
-      ;;
-  esac
+  read_reader "$binary" -collect-mecm "the Configuration Manager site" "systems"
 }
 run_capability mecm capability_mecm || true
 
@@ -2158,24 +2245,7 @@ capability_proxmox() {
     return 1
   fi
 
-  local status=0
-  "$binary" -portal "${CAIRN_PORTAL}" -collect-proxmox || status=$?
-  case "$status" in
-    0)
-      FOUND=$((FOUND + 1))
-      return 0
-      ;;
-    3)
-      say "NOT ASKED: the binary asked no Proxmox VE cluster anything; its reason is above."
-      UNASKED=$((UNASKED + 1))
-      return 1
-      ;;
-    *)
-      say "REFUSED: the Proxmox VE cluster was asked and did not answer with guests; the reason is above."
-      REFUSED=$((REFUSED + 1))
-      return 1
-      ;;
-  esac
+  read_reader "$binary" -collect-proxmox "the Proxmox VE cluster" "guests"
 }
 run_capability proxmox capability_proxmox || true
 
@@ -2228,24 +2298,25 @@ rule "what this appliance can reach"
 # portal, so a run that answered one capability printed two and the tally and
 # the card disagreed by one. It is a different fact, and it has its own line.
 #
-# An empty read is counted where it belongs, with the capabilities that
-# answered, and said on its own line so nobody reads it as data.
-say "answered:   $((FOUND - EMPTY))"
-if [ "$EMPTY" -gt 0 ]; then
-  say "empty:      ${EMPTY}   (read to the end and held nothing -- a read, not a refusal)"
-fi
-say "refused:    ${REFUSED}"
-say "not asked:  ${UNASKED}"
+# **Five counts, printed as five.** WO-1004-M item 1. Answered, empty, refused,
+# could not tell and not asked are five different facts, and only refused is
+# something the customer's systems said. A count that adds a refusal to an
+# unknown has two populations in one number: this tally printed could-not-tell
+# inside refused until 5 October 2026, in the fix that had just taken empty out
+# of it. Not run, which is about this box, is printed only when there is one.
+say "answered:       ${FOUND}"
+say "empty:          ${EMPTY}   (read to the end and held nothing -- a read, not a refusal)"
+say "refused:        ${REFUSED}   (the other end said no)"
+say "could not tell: ${UNTOLD}   (this run cannot tell a refusal from no answer -- about us, not them)"
+say "not asked:      ${UNASKED}"
 if [ "$NOTRUN" -gt 0 ]; then
-  say "not run:    ${NOTRUN}   (this box could not hear what it may read -- nothing"
-  say "            here is about the customer's network)"
+  say "not run:        ${NOTRUN}   (a fault on this box -- nothing here is about the"
+  say "                customer's network)"
 fi
-say "credential: ${CREDENTIAL_FROM}   (not a capability, and counted in none of the above)"
+say "credential:     ${CREDENTIAL_FROM}   (not a capability, and counted in none of the above)"
 say ""
-say "Three states, not two. A capability that was never asked -- because"
-say "something it depends on failed, or because nothing configured it -- is not"
-say "a capability that was tried and refused, and only one of those is evidence"
-say "about the customer's network."
+say "Five answers, not two. Only a refusal is evidence of what the customer's"
+say "systems allow; could not tell and not asked are about this run."
 say ""
 
 #
@@ -2258,12 +2329,8 @@ say ""
 # difference between an operator reading the output as *one right is missing*
 # and reading it as *this does not work*.
 #
-if [ "$FOUND" -gt 0 ] && [ "$REFUSED" -gt 0 ]; then
-  if [ "$EMPTY" -gt 0 ]; then
-    say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered, ${EMPTY} of them empty, and ${REFUSED} refused."
-  else
-    say "PARTLY PROVEN: ${FOUND} capabilit(ies) answered and ${REFUSED} refused."
-  fi
+if [ $((FOUND + EMPTY)) -gt 0 ] && [ "$REFUSED" -gt 0 ]; then
+  say "PARTLY PROVEN: $((FOUND + EMPTY)) capabilit(ies) answered (${EMPTY} of them empty) and ${REFUSED} refused."
   say "  That is a result, not a failed run. The ones that answered are proven"
   say "  on this host with this credential, and what they proved stays true"
   say "  whatever refused after them -- these capabilities need different"
@@ -2313,8 +2380,10 @@ binary_report_json() {
   digest="$(sha256sum "$binary" | cut -c1-64)" || digest=""
   if [ -z "$stamp" ] || ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
     say ""
+    # WO-1004-M item 2: this predicted what a page would say. The box cannot
+    # see a page; it says what it sends.
     say "BUILD NOT REPORTED: ${binary} did not say its build, or could not be hashed."
-    say "  The portal will say the build was not reported, rather than guess one."
+    say "  The run report carries no build, rather than a guessed one."
     return 0
   fi
   BINARY_JSON="$(printf ',"binary":{"stamp":"%s","sha256":"%s"}' "$(json_safe "$stamp")" "$digest")"
@@ -2403,9 +2472,8 @@ submit_run_report() {
     else
       say ""
       say "SCHEDULE NOT DECLARED: CAIRN_INTERVAL_MINUTES is not a positive whole"
-      say "  number of minutes, so no schedule is claimed for this run. The portal"
-      say "  will say none is recorded rather than calling this box late against a"
-      say "  number nobody set."
+      say "  number of minutes, so the run report declares no schedule for this run"
+      say "  rather than a number nobody set."
     fi
   fi
 
@@ -2439,27 +2507,52 @@ submit_run_report() {
   # The binary signs and sends. The file is written first and acted on
   # second: a payload travelling through a shell quote is the failure this
   # project has had nine of.
+  # The binary's own words are kept, because they are what tell a refusal by
+  # the portal from a report that never reached it. WO-1004-M item 2.
+  local said words
+  said="$(mktemp)"
   status=0
-  "${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -report <"$payload" >/dev/null \
+  "${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -report <"$payload" >/dev/null 2>"$said" \
     || status=$?
 
   rm -f "$payload"
+  sed 's/^/  /' "$said"
+  words="$(grep '^preflight: ' "$said" | tail -n 1)"
+  words="${words#preflight: }"
+  rm -f "$said"
 
   if [ "$status" -eq 0 ]; then
     say ""
     # WO-1004-L item 3: this said what the connection card now shows. The box
     # cannot see the card; what it knows is that the portal accepted the report.
     say "REPORTED: the portal accepted this run's report."
-  else
-    # **A refused report is said out loud rather than swallowed.** The run
-    # itself still stands -- what it reached is on the screen above -- and
-    # a silent failure here would leave a card asserting a stale reading
-    # with nobody aware it had stopped being updated.
-    say ""
-    say "NOT REPORTED: the portal refused the report (exit ${status})."
-    say "  The reason is on stderr above. The run itself is unaffected: what"
-    say "  it reached is printed above and nothing about it is in doubt."
+    return 0
   fi
+
+  # **A report that did not land is said out loud rather than swallowed**, and
+  # it says WHICH of three things happened. WO-1004-M item 2: this printed
+  # "the portal refused the report" for any non-zero exit, no route to the
+  # portal included -- the line a person reads at a terminal at night, sending
+  # them to debug our own service when the box had no network. A refusal is
+  # something the other end said; an exit code is something our process did.
+  # The run itself still stands either way: what it reached is printed above.
+  say ""
+  case "$words" in
+    "refused ("[0-9][0-9][0-9]")"*)
+      say "NOT REPORTED: the portal answered and refused the report: ${words}"
+      say "  The portal received it and said no, in the words above."
+      ;;
+    "reaching the portal:"*)
+      say "NOT REPORTED: this box could not reach the portal, so the portal said nothing."
+      say "  ${words}"
+      say "  Check this box's network, and that ${CAIRN_PORTAL} resolves and answers from here."
+      ;;
+    *)
+      say "NOT REPORTED: the report did not leave this box (exit ${status}): ${words:-the binary gave no reason}"
+      say "  That is a fault on this box, not an answer from the portal."
+      ;;
+  esac
+  say "  The run itself is unaffected: what it reached is printed above."
 }
 submit_run_report
 

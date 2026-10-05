@@ -92,7 +92,7 @@ capability_credential_source >/dev/null </dev/null
 
 # The tally.
 grep -q 'including step 0' "$SCRIPT" && bad "the tally still counts step 0" || ok "the tally no longer counts step 0"
-grep -q '^say "credential: ${CREDENTIAL_FROM}' "$SCRIPT" && ok "the tally prints the credential on its own line" || bad "no credential line in the tally"
+grep -qE '^say "credential: +[$][{]CREDENTIAL_FROM[}]' "$SCRIPT" && ok "the tally prints the credential on its own line" || bad "no credential line in the tally"
 
 printf '\n%s checks, %s failed\n' "$checks" "$fails"
 [ "$fails" -eq 0 ]

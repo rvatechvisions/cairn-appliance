@@ -163,7 +163,7 @@ CONSENT_UNHEARD="$saved_unheard"
 set --
 
 # --- a step consent never reached ------------------------------------------
-FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 CAP_JSON=""
+FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 EMPTY=0 UNTOLD=0 CAP_JSON=""
 CONSENT_KNOWN=0 CONSENTED=""
 stub_step() { say "this step ran"; FOUND=$((FOUND + 1)); return 0; }
 out="$(run_capability dhcp stub_step)"; run_capability dhcp stub_step >/dev/null
@@ -188,7 +188,7 @@ esac
 # --- a missing binary on a run that started --------------------------------
 # Consent known, the step permitted, and our binary absent: could-not-run, in
 # the list, with the reason naming the installation.
-FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 CAP_JSON=""
+FOUND=0 REFUSED=0 UNASKED=0 NOTRUN=0 EMPTY=0 UNTOLD=0 CAP_JSON=""
 CONSENT_KNOWN=1 CONSENTED="zabbix"
 eval "$(lift capability_zabbix)"
 HERE="${work}/nowhere"

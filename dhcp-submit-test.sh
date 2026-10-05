@@ -75,6 +75,9 @@ case "\${STUB_MODE:-}" in
   failed)
     echo "preflight: dial tcp: i/o timeout" >&2
     exit 1 ;;
+  noscopes)
+    echo "the server answered and serves no scopes. That is an answer, not a refusal; nothing was sent."
+    exit 0 ;;
 esac
 echo "read 2 scopes"
 case "\$*" in *-collect-dhcp*) echo "sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; echo submitted ;; esac
@@ -86,7 +89,7 @@ SETTINGS="${work}/settings.env"
 run_step() {
   HERE="$work" KERBEROS_OK=0 PRINCIPAL="svc@LAB.EXAMPLE" DHCP_SERVERS="${STEP_SERVERS-dhcp01.lab.example}"
   DHCP_REFUSAL="${STEP_REFUSAL:-}"
-  FOUND=0 REFUSED=0 UNASKED=0 EMPTY=0 CAP_NOTE=""
+  FOUND=0 REFUSED=0 UNASKED=0 EMPTY=0 UNTOLD=0 CAP_NOTE="" CAP_SCOPES=""
   : >"$calls"
   : >"$SUBMISSIONS_LOG"
   OUT="$(capability_dhcp)" ; capability_dhcp >/dev/null
@@ -118,31 +121,45 @@ type keep_submission_digest >/dev/null 2>&1 && ok "the digest keeper was lifted,
 export STUB_MODE=empty
 run_step
 [ "$REFUSED" -eq 0 ] && ok "an empty scope is not counted as a refusal" || bad "refused: $REFUSED"
-[ "$FOUND" -eq 1 ] && [ "$EMPTY" -eq 1 ] && ok "it is counted with the capabilities that answered, and as empty" || bad "found: $FOUND, empty: $EMPTY"
+# WO-1004-M item 6: empty is its own state now, not a kind of answered.
+[ "$FOUND" -eq 0 ] && [ "$EMPTY" -eq 1 ] && [ "$UNTOLD" -eq 0 ] && ok "it is counted as empty, on its own" || bad "found: $FOUND, empty: $EMPTY, untold: $UNTOLD"
+# WO-1004-M item 3: the counts, and only the counts, go up with the run.
+[ "$CAP_SCOPES" = '{"attempted":1,"unreadable":0,"empty":1}' ] && ok "the scope counts are carried for the run report" || bad "scopes: $CAP_SCOPES"
+case "$OUT" in *"EMPTY: 1 of 1 DHCP server(s) answered with every scope read and empty, so nothing was sent."*) ok "the line the report stores says what was read" ;; *) bad "printed: $OUT" ;; esac
 case "$OUT" in *"this server refused"*) bad "the screen calls an empty scope a refusal: $OUT" ;; *) ok "the screen does not say refused" ;; esac
 case "$OUT" in *"That is a read, not a refusal."*) ok "the screen says it was a read" ;; *) bad "printed: $OUT" ;; esac
 case "$OUT" in *"NOT KEPT"*) bad "a read that sent nothing reports a digest missing: $OUT" ;; *) ok "no missing digest is reported when nothing was sent" ;; esac
 case "$OUT" in *"nothing was submitted from dhcp01.lab.example, so there is no submission digest to keep."*) ok "the absent digest is said as a non-event" ;; *) bad "printed: $OUT" ;; esac
 [ ! -s "$SUBMISSIONS_LOG" ] && ok "and nothing is written to the digest log" || bad "kept: $(cat "$SUBMISSIONS_LOG")"
-[ "$CAP_NOTE" = "submitted to the portal from 0 of 1 DHCP server(s); 1 answered with every scope empty, so nothing was sent from them" ] && ok "the note says why nothing was sent" || bad "note: $CAP_NOTE"
+[ "$CAP_NOTE" = "1 of 1 DHCP server(s) answered with every scope read and empty, so nothing was sent" ] && ok "the note says why nothing was sent" || bad "note: $CAP_NOTE"
 
-# A scope that could not be read completely is not an empty one.
+# A server serving no scopes exits 0 and says so: an empty answer, not leases.
+export STUB_MODE=noscopes
+run_step
+[ "$FOUND" -eq 0 ] && [ "$EMPTY" -eq 1 ] && ok "a server serving no scopes is empty, not answered" || bad "found: $FOUND, empty: $EMPTY"
+
+# A scope that could not be read completely is not an empty one, and not a
+# refusal either: this run cannot tell. WO-1004-M item 1.
 export STUB_MODE=partial
 run_step
-[ "$EMPTY" -eq 0 ] && [ "$REFUSED" -eq 1 ] && ok "an incomplete read is not called empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED"
-case "$OUT" in *"cannot tell a"*) ok "and the screen says it cannot tell a refusal from no answer" ;; *) bad "printed: $OUT" ;; esac
+[ "$EMPTY" -eq 0 ] && [ "$REFUSED" -eq 0 ] && [ "$UNTOLD" -eq 1 ] && ok "an incomplete read is could not tell, never empty and never refused" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED, untold: $UNTOLD"
+case "$OUT" in *"COULD NOT TELL: 1 of 1 DHCP server(s) did not complete the read"*) ok "and the line the report stores says it cannot tell" ;; *) bad "printed: $OUT" ;; esac
+[ "$CAP_SCOPES" = '{"attempted":2,"unreadable":1,"empty":1}' ] && ok "and the scope counts still go up" || bad "scopes: $CAP_SCOPES"
 
 # The server said no.
 export STUB_MODE=denied
 run_step
-[ "$REFUSED" -eq 1 ] && [ "$FOUND" -eq 0 ] && ok "ERROR_ACCESS_DENIED is counted as a refusal" || bad "found: $FOUND, refused: $REFUSED"
+[ "$REFUSED" -eq 1 ] && [ "$FOUND" -eq 0 ] && [ "$UNTOLD" -eq 0 ] && ok "ERROR_ACCESS_DENIED is counted as a refusal" || bad "found: $FOUND, refused: $REFUSED, untold: $UNTOLD"
 case "$OUT" in *"this server refused (ERROR_ACCESS_DENIED)"*) ok "and the screen says refused" ;; *) bad "printed: $OUT" ;; esac
+case "$OUT" in *"REFUSED: 1 of 1 DHCP server(s) answered ERROR_ACCESS_DENIED"*) ok "and the line the report stores says who said what, naming no server" ;; *) bad "printed: $OUT" ;; esac
+printf '%s\n' "$OUT" | grep '^REFUSED:' | grep -q 'dhcp01' && bad "the stored line names the server: $OUT" || ok "the stored line names no server"
 
-# The read failed with no word from the server.
+# The read failed with no word from the server: could not tell, its own count.
 export STUB_MODE=failed
 run_step
-[ "$REFUSED" -eq 1 ] && [ "$EMPTY" -eq 0 ] && ok "a failure is counted with the refusals, never as empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED"
-case "$OUT" in *"this server refused"*) bad "a failure is called a refusal: $OUT" ;; *"cannot tell a"*) ok "and the screen says it cannot tell which" ;; *) bad "printed: $OUT" ;; esac
+[ "$REFUSED" -eq 0 ] && [ "$EMPTY" -eq 0 ] && [ "$UNTOLD" -eq 1 ] && ok "a failure is could not tell, never a refusal and never empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED, untold: $UNTOLD"
+case "$OUT" in *"this server refused"*) bad "a failure is called a refusal: $OUT" ;; *"COULD NOT TELL:"*) ok "and the screen says it cannot tell which" ;; *) bad "printed: $OUT" ;; esac
+[ -z "$CAP_SCOPES" ] && ok "and with no counts printed, none are sent" || bad "scopes from nowhere: $CAP_SCOPES"
 unset STUB_MODE
 
 # WO-1004-N item 1: the chooser refused to name a server -- the portal named

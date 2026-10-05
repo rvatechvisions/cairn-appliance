@@ -77,8 +77,8 @@ fi
 # ---------------------------------------------------------------------------
 
 states="$(grep -oE 'state="[a-z-]+"' "$SCRIPT" | sed 's/state="//;s/"//' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-[ "$states" = "could-not-run not-asked reached refused" ] \
-  && ok "the four states are the ones the portal parses" \
+[ "$states" = "could-not-run could-not-tell empty not-asked reached refused" ] \
+  && ok "the six states are the ones the portal parses, WO-1004-M item 6" \
   || bad "states changed: '${states}'"
 
 outcomes="$(grep -oE '"outcome":"[a-z-]+"' "$SCRIPT" | sed 's/.*:"//;s/"//' | sort -u | tr '\n' ' ' | sed 's/ $//')"

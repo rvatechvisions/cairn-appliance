@@ -1091,21 +1091,40 @@ tool_said() {
   printf '%s' "${said:-it printed nothing}"
 }
 
-# ldapsearch's answer, as one of three words:
-#   refused  the directory or the KDC answered no: invalid credentials,
-#            insufficient access, stronger authentication or confidentiality
-#            required, unwilling to perform, or no such service principal;
+# ldapsearch's answer, as one of four words:
+#   refused  the directory answered no: invalid credentials, insufficient
+#            access, stronger authentication or confidentiality required, or
+#            unwilling to perform;
 #   not-run  this host has no GSSAPI SASL mechanism, so nothing was attempted;
+#   no-spn   the KDC has no service principal for the name this box asked
+#            for, so the directory was never asked. Counted as could not tell;
+#            see no_spn_sentence;
 #   untold   anything else, "Can't contact LDAP server" included: this run
 #            cannot tell a refusal from no answer.
+#
+# **"Server not found in Kerberos database" was on the refused list until
+# WO-1004-V item 1, 5 October 2026.** It never says the directory answered: the
+# KDC was asked for ldap/<CAIRN_DC> and holds no such principal, which is
+# usually CAIRN_DC set to an address or an alias. The order author's ruling:
+# a pattern we know is wrong does not stay armed waiting for a box to prove it.
+# A wording's provenance decides how much we trust the match; its meaning
+# decides whether the match should exist at all. Unseen is a caveat; wrong is a
+# defect.
 ldap_outcome() {
   case "$1" in
     *"No worthy mechs found"*|*"Unknown authentication method"*) printf 'not-run' ;;
+    *"Server not found in Kerberos database"*) printf 'no-spn' ;;
     *"Invalid credentials (49)"*|*"Insufficient access (50)"*|*"Strong(er) authentication required (8)"*|\
-    *"Confidentiality required (13)"*|*"Unwilling to perform (53)"*|*"Server not found in Kerberos database"*)
+    *"Confidentiality required (13)"*|*"Unwilling to perform (53)"*)
       printf 'refused' ;;
     *) printf 'untold' ;;
   esac
+}
+
+# What a missing service principal suggests, in one sentence for every read
+# that can meet it.
+no_spn_sentence() {
+  printf '%s' "the KDC has no service principal for ldap/${DC}, the name this box asked for, so the directory was never asked. That is usually a configured value -- CAIRN_DC set to an address or an alias -- rather than an answer from the directory."
 }
 
 rule "1. Kerberos"
@@ -1517,6 +1536,7 @@ capability_ldap() {
   case "$verdict" in
     refused) say "REFUSED: the directory answered no to the bind or the read. ldapsearch said: ${said}" ;;
     not-run) say "NOT RUN: this host has no GSSAPI SASL mechanism, so the bind was never attempted. ldapsearch said: ${said}" ;;
+    no-spn) say "COULD NOT TELL: $(no_spn_sentence) ldapsearch said: ${said}" ;;
     *) say "COULD NOT TELL: the bind or the read did not complete, and this run cannot tell a refusal from no answer. ldapsearch said: ${said}" ;;
   esac
 
@@ -1554,7 +1574,7 @@ capability_ldap() {
       say ""
       say "  THIS IS THE NAME, NOT THE ACCOUNT AND NOT THE TICKET."
       say "  Step 1 holds a valid ticket; the KDC has no service principal"
-      say "  called ldap/${DC}, and refused before any right was consulted."
+      say "  called ldap/${DC}, and said so before any right was consulted."
 
       # Read what the resolver says rather than asserting what it probably is.
       #
@@ -1722,7 +1742,7 @@ capability_dns() {
   local zones="" present=0 absent=0 could_not=0 refused_at=0 notrun_at=0 container out status said=""
   # Each verdict quotes a place that gave that verdict: the first failure's words
   # under REFUSED would put "Can't contact LDAP server" beside a refusal.
-  local refused_said="" notrun_said="" outcome
+  local refused_said="" notrun_said="" outcome nospn_at=0
   for container in "${containers[@]}"; do
     say "looking under: ${container}"
     out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "$container" \
@@ -1751,6 +1771,7 @@ capability_dns() {
             notrun_at=$((notrun_at + 1))
             [ -z "$notrun_said" ] && notrun_said="$(tool_said "$out")"
             ;;
+          no-spn) nospn_at=$((nospn_at + 1)) ;;
         esac
         [ -z "$said" ] && said="$(tool_said "$out")"
         ;;
@@ -1778,6 +1799,8 @@ capability_dns() {
       say "REFUSED: the directory answered no for ${refused_at} of the place(s) DNS zones can be kept. ldapsearch said: ${refused_said}"
     elif [ $notrun_at -gt 0 ]; then
       say "NOT RUN: this host has no GSSAPI SASL mechanism, so ${notrun_at} place(s) DNS zones can be kept were not asked. ldapsearch said: ${notrun_said}"
+    elif [ $nospn_at -gt 0 ]; then
+      say "COULD NOT TELL: ${could_not} place(s) DNS zones can be kept could not be read: $(no_spn_sentence) ldapsearch said: ${said}"
     else
       say "COULD NOT TELL: ${could_not} place(s) DNS zones can be kept could not be read, and this run cannot tell a refusal from no answer. ldapsearch said: ${said:-the forest root was not readable from the rootDSE}"
     fi
@@ -1859,6 +1882,10 @@ capability_authorized_servers() {
       not-run)
         say "NOT RUN: this host has no GSSAPI SASL mechanism, so the list was never asked for. ldapsearch said: ${said}"
         NOTRUN=$((NOTRUN + 1))
+        ;;
+      no-spn)
+        say "COULD NOT TELL: the authorized-server list could not be read: $(no_spn_sentence) ldapsearch said: ${said}"
+        UNTOLD=$((UNTOLD + 1))
         ;;
       *)
         say "COULD NOT TELL: the authorized-server list could not be read, and this run cannot tell a refusal from no answer. ldapsearch said: ${said}"
@@ -2357,8 +2384,24 @@ read_reader() {
     # portal's words can themselves say "refused". That is Cairn refusing what
     # this box sent, after the far end had answered, and never a refusal by the
     # far end. So it is matched before the far end's arm, by its shape.
+    #
+    # **This is a vocabulary match holding a structural seam.** WO-1004-V item 2:
+    # the binary puts the portal's error text and the far end's through one
+    # line, and this arm decides whose it was by its words. Until the binary says
+    # whose an error is as a field rather than a prefix -- queued in the portal
+    # repository's APPLIANCE-BINARY-QUEUE.md -- these patterns are all that
+    # stands between Cairn's own refusal and a client's system being named for it.
     "refused ("*|*": refused ("*|*"the portal refused "*)
       say "COULD NOT TELL: Cairn's portal refused what this box sent for ${who}, so this is not a refusal by ${who}: ${said}"
+      UNTOLD=$((UNTOLD + 1))
+      return 1
+      ;;
+    # WO-1004-V item 3: a TCP connection refused is nothing listening at the
+    # address -- the network answering, not ${who}. It read COULD NOT TELL only
+    # because Go ends the line with the word and the arm below needs a space
+    # after it; named here, so the verdict stops depending on punctuation.
+    *"connection refused"*)
+      say "COULD NOT TELL: nothing accepted a connection at the address for ${who}, which is the network answering and not ${who}, so this run cannot tell a refusal from no answer: ${said}"
       UNTOLD=$((UNTOLD + 1))
       return 1
       ;;

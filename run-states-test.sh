@@ -71,6 +71,7 @@ case "${mode}" in
   portal) echo "preflight: refused (400): The submission is not the shape the contract describes: items. It will be refused identically every time, so fix the sender rather than retrying." >&2 ; exit 1 ;;
   relayportal) echo "preflight: the portal refused the request for work (403)" >&2 ; exit 1 ;;
   connrefused) echo 'preflight: reaching vCenter: Post "https://vc.example.com/api/session": dial tcp 10.0.0.9:443: connect: connection refused' >&2 ; exit 1 ;;
+  connrefusedmid) echo 'preflight: reaching vCenter: dial tcp 10.0.0.9:443: connect: connection refused ; and signing out failed too' >&2 ; exit 1 ;;
 esac
 STUB
   chmod +x "$stub"
@@ -100,6 +101,10 @@ reader relayportal
 [ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "the portal refusing the relay's request for work is not the far end refusing" || bad "a relay portal refusal was charged to the far end: untold ${UNTOLD}, refused ${REFUSED}"
 reader connrefused
 [ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "a connection refused at the end of the line is could not tell" || bad "connection refused was read as a refusal: untold ${UNTOLD}, refused ${REFUSED}"
+# WO-1004-V item 3: the same, with words after it, which the far end's arm would match.
+reader connrefusedmid
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "a connection refused mid-line is could not tell too, by name rather than by punctuation" || bad "a connection refused followed by words was read as a refusal: untold ${UNTOLD}, refused ${REFUSED}: ${OUT}"
+case "$OUT" in *"COULD NOT TELL: nothing accepted a connection at the address for the Zabbix server, which is the network answering"*) ok "and it says the network answered, not the reader" ;; *) bad "printed: ${OUT}" ;; esac
 
 # --- run_capability: six counters, six states -----------------------------
 CONSENT_KNOWN=1 CONSENTED="all"

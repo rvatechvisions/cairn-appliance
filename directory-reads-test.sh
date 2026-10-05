@@ -28,10 +28,11 @@
 # authentication required (8)", "Confidentiality required (13)", "Unwilling to
 # perform (53)" and "Server not found in Kerberos database" are LDAP result codes
 # and a GSSAPI message as the builder knows them; none was copied from a run.
-# The last is the one to watch: it means the KDC has no service principal for
-# the name this box asked for -- CAIRN_DC as an address or an alias -- so the
-# directory was never asked, and REFUSED there says the directory answered no
-# when it did not. Reported, not changed, because the wording itself is unseen.
+# The last means the KDC has no service principal for the name this box asked
+# for -- CAIRN_DC as an address or an alias -- so the directory was never asked.
+# It was REFUSED, and since WO-1004-V item 1 it is COULD NOT TELL, saying what it
+# suggests: unseen is a caveat on how far a match is trusted; wrong is a defect
+# in whether it should exist.
 
 set -uo pipefail
 
@@ -60,6 +61,7 @@ lift() {
 }
 eval "$(lift tool_said)"
 eval "$(lift ldap_outcome)"
+eval "$(lift no_spn_sentence)"
 eval "$(lift capability_ldap)"
 eval "$(lift capability_dns)"
 
@@ -180,6 +182,16 @@ if [ $STATUS -ne 0 ] && [ $REFUSED -eq 1 ] && [ $UNTOLD -eq 0 ] && grep -q 'Insu
   pass "a place the directory refused to show is REFUSED, in ldapsearch's own words"
 else
   fail "a refused zone read was not REFUSED in the tool's words: $(cat "$OUT")"
+fi
+
+# WO-1004-V item 1: no service principal for the name asked is not the directory answering.
+LDAP_TABLE="${BASE_DN}|254|ldap_sasl_interactive_bind: Local error (-2)\n\tadditional info: SASL(-1): generic failure: GSSAPI Error: Unspecified GSS failure.  Minor code may provide more information (Server not found in Kerberos database)"
+run capability_ldap
+if [ $STATUS -ne 0 ] && [ $UNTOLD -eq 1 ] && [ $REFUSED -eq 0 ] && ! grep -q '^REFUSED' "$OUT" \
+   && grep -q 'COULD NOT TELL: the KDC has no service principal for ldap/dc.example.com' "$OUT"; then
+  pass "no service principal for the name asked is COULD NOT TELL, and says it is usually a configured value"
+else
+  fail "a missing service principal was printed as the directory refusing: $(cat "$OUT")"
 fi
 
 LDAP_TABLE="${ROOTDSE}

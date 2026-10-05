@@ -21,6 +21,47 @@
 # on the box: that is the weaker kind of fixture, and it is named here so
 # nobody reads these as captured.
 #
+# ## Which recognized wordings have been seen, 5 October 2026 (WO-1004-T item 1)
+#
+# A classifier built from remembered wordings is an inference until a real
+# message confirms each one. **The risk is in the recognized half**: an
+# unrecognized message falls to COULD NOT TELL, which is honest, and a pattern
+# that matches the wrong message is a false refusal about a client's domain.
+# Each pattern below is a substring matched anywhere in what kinit printed.
+#
+#   pattern                            seen on a box?   what else could match it
+#   "Password incorrect"               YES, RVA's own   nothing known
+#                                      appliance
+#   "Clock skew" / "clock skew"        no               any kinit line that mentions
+#                                                       clock skew; none known
+#   "not found in Kerberos database"   no               "Server not found in Kerberos
+#     / "Client not found"                              database": the KDC answering about
+#                                                       a SERVICE principal, which this
+#                                                       script then reports as no such
+#                                                       account. Still the domain's answer,
+#                                                       so not a non-refusal, but it names
+#                                                       the wrong principal. Reported, not
+#                                                       changed (WO-1004-T item 1)
+#   "Password has expired"             no               nothing known. MIT kinit is
+#                                                       believed to prompt "Password
+#                                                       expired. You must change it now."
+#                                                       instead, which this does NOT match,
+#                                                       so the miss goes to COULD NOT TELL
+#   "credentials have been revoked"    no               nothing known. The sentence says
+#                                                       "disabled or locked out"; Active
+#                                                       Directory is believed to answer the
+#                                                       same for an expired account or one
+#                                                       outside its logon hours, so the
+#                                                       cause named may be narrower than
+#                                                       the truth
+#
+# The configured principal and realm are quoted back in some kinit messages, so a
+# principal or realm containing one of these phrases would match. None could
+# plausibly do so, and that is the only quoted value kinit prints.
+#
+# **When a box prints one of the four unseen wordings, copy it here, whole, and
+# move its row to YES.** Until then each is an inference, however well known.
+#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

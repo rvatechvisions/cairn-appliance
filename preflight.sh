@@ -2351,6 +2351,17 @@ read_reader() {
       EMPTY=$((EMPTY + 1))
       return 0
       ;;
+    # WO-1004-T item 2: the portal's own refusals reach this line too. The
+    # binary passes them through as "refused (<status>): <the portal's words>"
+    # from a submission, and as "the portal refused ..." from the relay, and the
+    # portal's words can themselves say "refused". That is Cairn refusing what
+    # this box sent, after the far end had answered, and never a refusal by the
+    # far end. So it is matched before the far end's arm, by its shape.
+    "refused ("*|*": refused ("*|*"the portal refused "*)
+      say "COULD NOT TELL: Cairn's portal refused what this box sent for ${who}, so this is not a refusal by ${who}: ${said}"
+      UNTOLD=$((UNTOLD + 1))
+      return 1
+      ;;
     *" refused "*)
       say "REFUSED: ${said}"
       REFUSED=$((REFUSED + 1))

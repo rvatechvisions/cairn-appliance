@@ -21,6 +21,17 @@
 # is a shell function answering from a table keyed by the base DN it is asked
 # for, so every case is one the script really meets: present, "no such object"
 # (32), and a failure that is neither.
+#
+# ## ldap_outcome's wordings have none of them been seen (WO-1004-T item 1)
+#
+# "Invalid credentials (49)", "Insufficient access (50)", "Strong(er)
+# authentication required (8)", "Confidentiality required (13)", "Unwilling to
+# perform (53)" and "Server not found in Kerberos database" are LDAP result codes
+# and a GSSAPI message as the builder knows them; none was copied from a run.
+# The last is the one to watch: it means the KDC has no service principal for
+# the name this box asked for -- CAIRN_DC as an address or an alias -- so the
+# directory was never asked, and REFUSED there says the directory answered no
+# when it did not. Reported, not changed, because the wording itself is unseen.
 
 set -uo pipefail
 

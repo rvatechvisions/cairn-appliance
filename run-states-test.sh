@@ -68,6 +68,9 @@ case "${mode}" in
   empty) echo "preflight: the Zabbix server listed no host this token may read, so nothing was sent" >&2 ; exit 1 ;;
   refused) echo "preflight: vCenter refused the account (401)" >&2 ; exit 1 ;;
   failed) echo "preflight: reaching the Zabbix server: dial tcp 10.0.0.9:443: i/o timeout" >&2 ; exit 1 ;;
+  portal) echo "preflight: refused (400): The submission is not the shape the contract describes: items. It will be refused identically every time, so fix the sender rather than retrying." >&2 ; exit 1 ;;
+  relayportal) echo "preflight: the portal refused the request for work (403)" >&2 ; exit 1 ;;
+  connrefused) echo 'preflight: reaching vCenter: Post "https://vc.example.com/api/session": dial tcp 10.0.0.9:443: connect: connection refused' >&2 ; exit 1 ;;
 esac
 STUB
   chmod +x "$stub"
@@ -89,6 +92,14 @@ case "$OUT" in *"REFUSED: vCenter refused the account (401)"*) ok "and it is sta
 reader failed
 [ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "a failure is could not tell, never a refusal" || bad "untold ${UNTOLD}, refused ${REFUSED}"
 case "$OUT" in *"COULD NOT TELL: the Zabbix server did not answer with hosts"*"reaching the Zabbix server"*) ok "and the stored line quotes what happened" ;; *) bad "printed: ${OUT}" ;; esac
+# WO-1004-T item 2: the portal's words say "refused" too, and they are Cairn's.
+reader portal
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "the portal refusing a submission is not the far end refusing" || bad "a portal refusal was charged to the far end: untold ${UNTOLD}, refused ${REFUSED}: ${OUT}"
+case "$OUT" in *"COULD NOT TELL: Cairn's portal refused what this box sent for the Zabbix server"*"refused (400)"*) ok "and it says whose refusal it was, in the portal's words" ;; *) bad "printed: ${OUT}" ;; esac
+reader relayportal
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "the portal refusing the relay's request for work is not the far end refusing" || bad "a relay portal refusal was charged to the far end: untold ${UNTOLD}, refused ${REFUSED}"
+reader connrefused
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "a connection refused at the end of the line is could not tell" || bad "connection refused was read as a refusal: untold ${UNTOLD}, refused ${REFUSED}"
 
 # --- run_capability: six counters, six states -----------------------------
 CONSENT_KNOWN=1 CONSENTED="all"

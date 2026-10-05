@@ -2142,7 +2142,7 @@ capability_dhcp() {
     submit=1
     mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
   fi
-  local submitted=0 asked=0 empty=0 answered=0 refused=0 untold=0
+  local submitted=0 asked=0 empty=0 answered=0 refused=0 untold=0 notsent=0 notsent_said=""
   # "1 of 1 DHCP server", "1 of 2 DHCP servers": the noun follows the number it counts.
   local noun
   local scopes_seen=0 scopes_attempted=0 scopes_unreadable=0 scopes_empty=0
@@ -2154,6 +2154,13 @@ capability_dhcp() {
   #   empty           every scope it attempted was read to the end and held no
   #                   lease, or it serves none -- nothing to send, and a read;
   #   refused         the server answered ERROR_ACCESS_DENIED;
+  #   not-sent        the server was read, and what this box sent was refused by
+  #                   Cairn's portal or never reached it. WO-1004-W item 1: this
+  #                   was could-not-tell, printed as the server not completing the
+  #                   read -- Cairn's failure described as the server's. Matched
+  #                   by the binary's own shapes for a portal answer, which is a
+  #                   vocabulary match holding the structural seam named in the
+  #                   portal repository's APPLIANCE-BINARY-QUEUE.md;
   #   could-not-tell  anything else. This run cannot tell a refusal from a
   #                   server that did not answer, and says so rather than
   #                   choosing -- and, WO-1004-M item 1, counts it as that, never
@@ -2201,6 +2208,11 @@ capability_dhcp() {
          && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] \
          && [ "$devices" = "devices: 0, from leases whose hardware address could be read; 0 refused as unreadable" ]; then
       DHCP_READ="empty"
+    # RETIRES-WITH error-source: the DHCP read's not-sent arm
+    elif grep -qE "^preflight: (refused \(|reaching the portal: |the portal's answer did not parse)" "$output"; then
+      DHCP_READ="not-sent"
+      DHCP_NOT_SENT_SAID="$(grep -m1 -E "^preflight: (refused \(|reaching the portal: |the portal's answer did not parse)" "$output")"
+      DHCP_NOT_SENT_SAID="${DHCP_NOT_SENT_SAID#preflight: }"
     elif grep -q 'ERROR_ACCESS_DENIED' "$output"; then
       DHCP_READ="refused"
     else
@@ -2268,6 +2280,11 @@ capability_dhcp() {
         refused=$((refused + 1))
         say "  this server refused (ERROR_ACCESS_DENIED). The others are still being asked."
         ;;
+      not-sent)
+        notsent=$((notsent + 1))
+        [ -z "$notsent_said" ] && notsent_said="$DHCP_NOT_SENT_SAID"
+        say "  this server was read. What this box sent did not land at Cairn's portal, which is Cairn's, not the server's: ${DHCP_NOT_SENT_SAID}"
+        ;;
       *)
         untold=$((untold + 1))
         say "  this server did not complete the read, in the binary's words above. This run cannot tell a"
@@ -2290,6 +2307,7 @@ capability_dhcp() {
   [ "$empty" -gt 0 ] && [ "$answered" -gt 0 ] && others="${others}; ${empty} answered with every scope empty, so nothing was sent from them"
   [ "$refused" -gt 0 ] && others="${others}; ${refused} refused (ERROR_ACCESS_DENIED)"
   [ "$untold" -gt 0 ] && others="${others}; ${untold} could not be told apart from a server that did not answer"
+  [ "$notsent" -gt 0 ] && others="${others}; ${notsent} read, and what was sent did not land at Cairn's portal"
 
   if [ "$submit" -eq 1 ]; then
     CAP_NOTE="submitted to the portal from ${submitted} of ${asked} ${noun}${others}"
@@ -2323,6 +2341,14 @@ capability_dhcp() {
     say ""
     say "REFUSED: ${refused} of ${asked} ${noun} answered ERROR_ACCESS_DENIED to the account reading them.${untold_note}"
     REFUSED=$((REFUSED + 1))
+    return 1
+  fi
+  if [ "$untold" -eq 0 ] && [ "$notsent" -gt 0 ]; then
+    local were="were"
+    [ "$notsent" -eq 1 ] && were="was"
+    say ""
+    say "COULD NOT TELL: ${notsent} of ${asked} ${noun} answered and ${were} read, and what this box sent did not land at Cairn's portal. That is Cairn's, not the server's: ${notsent_said}"
+    UNTOLD=$((UNTOLD + 1))
     return 1
   fi
   say ""
@@ -2391,6 +2417,7 @@ read_reader() {
     # whose an error is as a field rather than a prefix -- queued in the portal
     # repository's APPLIANCE-BINARY-QUEUE.md -- these patterns are all that
     # stands between Cairn's own refusal and a client's system being named for it.
+    # RETIRES-WITH error-source: read_reader's portal arm
     "refused ("*|*": refused ("*|*"the portal refused "*)
       say "COULD NOT TELL: Cairn's portal refused what this box sent for ${who}, so this is not a refusal by ${who}: ${said}"
       UNTOLD=$((UNTOLD + 1))
@@ -2400,6 +2427,7 @@ read_reader() {
     # address -- the network answering, not ${who}. It read COULD NOT TELL only
     # because Go ends the line with the word and the arm below needs a space
     # after it; named here, so the verdict stops depending on punctuation.
+    # RETIRES-WITH error-source: read_reader's connection refused arm
     *"connection refused"*)
       say "COULD NOT TELL: nothing accepted a connection at the address for ${who}, which is the network answering and not ${who}, so this run cannot tell a refusal from no answer: ${said}"
       UNTOLD=$((UNTOLD + 1))

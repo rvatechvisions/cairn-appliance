@@ -78,6 +78,17 @@ case "\${STUB_MODE:-}" in
   noscopes)
     echo "the server answered and serves no scopes. That is an answer, not a refusal; nothing was sent."
     exit 0 ;;
+  portalrefused)
+    echo "scopes: 2 attempted, 0 could not be read completely, 0 empty"
+    echo "devices: 14, from leases whose hardware address could be read; 0 refused as unreadable"
+    echo "sending 900 bytes, body SHA-256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    echo "preflight: refused (400): The submission is not the shape the contract describes: items. It will be refused identically every time, so fix the sender rather than retrying." >&2
+    exit 1 ;;
+  portalunreached)
+    echo "scopes: 1 attempted, 0 could not be read completely, 0 empty"
+    echo "devices: 3, from leases whose hardware address could be read; 0 refused as unreadable"
+    echo "preflight: reaching the portal: Post \"https://portal.example/collect\": dial tcp: lookup portal.example: no such host" >&2
+    exit 1 ;;
 esac
 echo "read 2 scopes"
 case "\$*" in *-collect-dhcp*) echo "sending 41 bytes, body SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; echo submitted ;; esac
@@ -160,6 +171,24 @@ run_step
 [ "$REFUSED" -eq 0 ] && [ "$EMPTY" -eq 0 ] && [ "$UNTOLD" -eq 1 ] && ok "a failure is could not tell, never a refusal and never empty" || bad "found: $FOUND, empty: $EMPTY, refused: $REFUSED, untold: $UNTOLD"
 case "$OUT" in *"this server refused"*) bad "a failure is called a refusal: $OUT" ;; *"COULD NOT TELL:"*) ok "and the screen says it cannot tell which" ;; *) bad "printed: $OUT" ;; esac
 [ -z "$CAP_SCOPES" ] && ok "and with no counts printed, none are sent" || bad "scopes from nowhere: $CAP_SCOPES"
+unset STUB_MODE
+
+# WO-1004-W item 1: the server was read and Cairn's portal refused what was
+# sent, or was never reached. That was printed as the server not completing the
+# read; it is Cairn's, and the line says so.
+export CAIRN_DHCP_SUBMIT=yes
+for mode in portalrefused portalunreached; do
+  export STUB_MODE=$mode
+  run_step
+  [ "$REFUSED" -eq 0 ] && [ "$EMPTY" -eq 0 ] && [ "$FOUND" -eq 0 ] && [ "$UNTOLD" -eq 1 ] \
+    && ok "${mode}: a read whose submission did not land is could not tell, never a refusal" \
+    || bad "${mode}: found ${FOUND}, empty ${EMPTY}, refused ${REFUSED}, untold ${UNTOLD}"
+  case "$OUT" in
+    *"did not complete the read"*) bad "${mode}: Cairn's failure was described as the server's: $OUT" ;;
+    *"COULD NOT TELL: 1 of 1 DHCP server answered and was read, and what this box sent did not land at Cairn's portal. That is Cairn's, not the server's:"*) ok "${mode}: and the stored line says it was Cairn's, in the binary's words" ;;
+    *) bad "${mode}: printed: $OUT" ;;
+  esac
+done
 unset STUB_MODE
 
 # WO-1004-N item 1: the chooser refused to name a server -- the portal named

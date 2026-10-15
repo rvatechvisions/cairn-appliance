@@ -17,12 +17,15 @@
 #
 # ## What it reads
 #
-# **KNOWN GAP, recorded 1 October 2026 and queued for its own order (portal
-# BACKLOG.md, under Next): this checker reports checked on text it never read.**
-# A helper that prints through say rather than printf or echo is invisible to
-# the helper detector -- refuse_install in install-binary.sh and
-# refuse_disagreement in preflight.sh are the two known -- and the extractor
-# reads only a helper's first quoted argument. Not fixed here, deliberately.
+# ~~**KNOWN GAP, recorded 1 October 2026: this checker reports checked on text
+# it never read.**~~ *Closed by WO-1015-N28 item 5, 15 October 2026.* A helper
+# that printed through say rather than printf or echo was invisible to the
+# helper detector -- refuse_install in install-binary.sh and
+# refuse_disagreement in preflight.sh were the two -- and the extractor read
+# only the first quoted argument on one line. The detector now counts a call to
+# say, rule or step as printing, and follows any positional argument through a
+# local; the two helpers are read below by the position their text arrives in,
+# across lines.
 #
 # The text these programs PRINT, not their code. A shell variable name and a Go
 # identifier are not read as English by anybody, and checking them would produce
@@ -122,6 +125,37 @@ while IFS= read -r file; do
     | sed -E 's/\$\{[^}]*\}/ /g; s/\$[A-Za-z_][A-Za-z0-9_]*/ /g' \
     | sed -E 's/%-?[0-9]*[a-zA-Z]/ /g; s/\\[nrt]/ /g' \
     >> "$OUT"
+done < <(git ls-files '*.sh')
+
+# Helpers whose sentence is not their first argument, or runs over several
+# lines: each is read at the position its text arrives in, as name:position.
+# refuse_install takes the target, then the sentence; refuse_disagreement takes
+# the field's label, then two values nobody spells; read_reader takes the
+# binary and a flag, then the source's name and what it lists. The quoted
+# argument is read whole, newlines included, which a line-by-line grep cannot
+# do, and an unquoted argument counts toward the position without being read.
+#
+# verify_and_install, binary_report_json and capability_dhcp print what they
+# are handed and every caller today hands them a variable or nothing, so
+# nothing is extracted from them; they are listed, as keep_submission_digest
+# is above, so a literal handed to one later is read. WO-1015-N28 item 5.
+POSITIONED='refuse_install:2 refuse_disagreement:1 read_reader:3 read_reader:4 verify_and_install:1 verify_and_install:2 verify_and_install:3 binary_report_json:1 capability_dhcp:1'
+while IFS= read -r file; do
+  [ -f "$file" ] || continue
+  for entry in $POSITIONED; do
+    HELPER="${entry%%:*}" POSITION="${entry##*:}" perl -0777 -ne '
+      my $name = $ENV{HELPER}; my $at = $ENV{POSITION};
+      while (/(?:^|[\s;])\Q$name\E((?:[ \t]+(?:"(?:[^"\\]|\\.)*"|[^\s"]+)){$at})/g) {
+        my @tokens;
+        my $seq = $1;
+        while ($seq =~ /"((?:[^"\\]|\\.)*)"|([^\s"]+)/g) { push @tokens, defined $1 ? [1, $1] : [0, $2]; }
+        my $t = $tokens[$at - 1];
+        print "$t->[1]\n" if defined $t && $t->[0];
+      }
+    ' "$file" \
+      | sed -E 's/\$\{[^}]*\}/ /g; s/\$[A-Za-z_][A-Za-z0-9_]*/ /g' \
+      >> "$OUT"
+  done
 done < <(git ls-files '*.sh')
 
 while IFS= read -r file; do

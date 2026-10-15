@@ -101,7 +101,7 @@ esac
 # opinion about one string, which is how two copies of a fact come to
 # disagree. This reads printed text; that one reads the vocabulary.
 
-EXTRACTED='say rule step keep_submission_digest echo printf'
+EXTRACTED='say rule step keep_submission_digest echo printf refuse_install refuse_disagreement read_reader verify_and_install binary_report_json capability_dhcp'
 
 printers=''
 shipped=''
@@ -118,7 +118,7 @@ while IFS= read -r file; do
     /^[a-z_][a-z0-9_]*\(\)[ \t]*\{/ {
       name = $0; sub(/\(\).*/, "", name)
       if ($0 ~ /\}[ \t]*$/) {
-        if ($0 ~ /(printf|echo)/ && $0 ~ /\$[*@1]/) print name
+        if ($0 ~ /(printf|echo|(^|[ \t;{])(say|rule|step)[ \t])/ && $0 ~ /\$[*@1-9]/) print name
         next
       }
       inside = 1; prints = 0; delete alias; next
@@ -128,16 +128,25 @@ while IFS= read -r file; do
 
     # A local standing in for an argument. `step` is the case: local
     # name="$1", then printf ... "$name" two lines down.
-    inside && match($0, /(^|[ \t;])(local[ \t]+)?[a-z_][a-z0-9_]*="?\$[1*@]/) {
-      part = substr($0, RSTART, RLENGTH)
-      sub(/.*[ \t;]/, "", part); sub(/^local[ \t]+/, "", part)
-      sub(/=.*/, "", part)
-      if (part != "") alias[part] = 1
+    # Every name on the line given a positional argument: refuse_install is
+    # local target="$1" why="$2" installed, two on one line, and the sentence
+    # is the second. WO-1015-N28 item 5.
+    inside {
+      rest = $0
+      while (match(rest, /(^|[ \t;])(local[ \t]+)?[a-z_][a-z0-9_]*="?\$[1-9*@]/)) {
+        part = substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+        sub(/.*[ \t;]/, "", part); sub(/^local[ \t]+/, "", part)
+        sub(/=.*/, "", part)
+        if (part != "") alias[part] = 1
+      }
     }
 
-    inside && /(printf|echo)/ {
+    # Printing directly, or through a helper that prints: a body that hands an
+    # argument to say, rule or step prints it as surely as one calling printf.
+    inside && /(printf|echo|(^|[ \t;])(say|rule|step)[ \t])/ {
       # Directly, or through one of this body’s aliases.
-      if ($0 ~ /\$[*@1]([^0-9]|$)|\$\{1[}:]/) prints = 1
+      if ($0 ~ /\$[*@1-9]([^0-9]|$)|\$\{[1-9][}:]/) prints = 1
       else for (a in alias) if ($0 ~ ("\\$" a "([^a-zA-Z0-9_]|$)") ||
                                 $0 ~ ("\\$\\{" a "[}:]")) prints = 1
     }

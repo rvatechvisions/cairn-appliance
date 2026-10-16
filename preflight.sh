@@ -1959,18 +1959,57 @@ run_capability dhcp-authorized capability_authorized_servers || true
 # ---------------------------------------------------------------------------
 rule "4a. Active Directory checks, over LDAP"
 
-# One read: ldapsearch's output, exit status and the words it gave, under a name.
-ad_read() {
-  local dir="$1" name="$2" base="$3" scope="$4" filter="$5"
-  shift 5
+# One read of one host: ldapsearch's output, exit status and the words it gave,
+# under a name.
+ad_read_at() {
+  local host="$1" dir="$2" name="$3" base="$4" scope="$5" filter="$6"
+  shift 6
   # Every file this read leaves, named once. It writes files and prints
   # nothing: the step prints one counted line once every read is made.
   local out="${dir}/${name}" status=0 said
-  ldapsearch -LLL -E pr=1000/noprompt -Y GSSAPI -H "ldap://${DC}" -b "$base" -s "$scope" "$filter" "$@" \
+  ldapsearch -LLL -E pr=1000/noprompt -Y GSSAPI -H "ldap://${host}" -b "$base" -s "$scope" "$filter" "$@" \
     >"${out}.ldif" 2>"${out}.err" || status=$?
   printf '%s\n' "$status" >"${out}.status"
   said="$(tool_said "$(cat "${out}.err")")"
   printf '%s\n' "$said" >"${out}.said"
+}
+
+# Most reads ask the controller this run already reaches.
+ad_read() {
+  ad_read_at "$DC" "$@"
+}
+
+# The host of every domain controller holding this domain, from two reads
+# already made: each nTDSDSA naming this domain, and the server object above
+# it, which carries dNSHostName. WO-1016-N40 item 2. A list the directory
+# gave, never a range: nothing here is asked that the directory did not name.
+# LDIF folds long lines with a leading space, so they are joined first.
+ad_dc_hosts() {
+  local dir="$1"
+  awk -v base="$BASE_DN" '
+    # One logical line, its folded continuations already joined.
+    function line(text,    value) {
+      if (text == "") { end_entry(); return }
+      if (tolower(text) ~ /^dn: /) { dn = substr(text, 5); return }
+      if (file == 1 && tolower(text) ~ /^(msds-hasdomainncs|hasmasterncs): /) {
+        value = text; sub(/^[^:]*: /, "", value)
+        if (tolower(value) == tolower(base)) { holds = 1 }
+      }
+      if (file == 2 && (tolower(dn) in servers) && tolower(text) ~ /^dnshostname: /) {
+        value = text; sub(/^[^:]*: /, "", value); print value
+      }
+    }
+    function end_entry() {
+      if (file == 1 && dn != "" && holds && tolower(substr(dn, 1, 17)) == "cn=ntds settings,") {
+        servers[tolower(substr(dn, 18))] = 1
+      }
+      dn = ""; holds = 0
+    }
+    FNR == 1 { if (started) { line(pending); end_entry() } pending = ""; started = 0; file++ }
+    /^ / { pending = pending substr($0, 2); next }
+    { if (started) { line(pending) } pending = $0; started = 1 }
+    END { if (started) { line(pending) } end_entry() }
+  ' "${dir}/dcs.ldif" "${dir}/servers.ldif"
 }
 
 capability_ad_assessment() {
@@ -2000,9 +2039,9 @@ capability_ad_assessment() {
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   ad_read "$dir" users "$BASE_DN" sub '(&(objectCategory=person)(objectClass=user))' \
-    sAMAccountName name userAccountControl lastLogonTimestamp whenCreated
+    sAMAccountName name userAccountControl lastLogonTimestamp whenCreated givenName sn mail
   ad_read "$dir" groups "$BASE_DN" sub '(objectClass=group)' \
-    name groupType whenCreated managedBy member
+    name groupType whenCreated managedBy member objectSid
   ad_read "$dir" gpos "CN=Policies,CN=System,${BASE_DN}" one '(objectClass=groupPolicyContainer)' \
     cn displayName flags whenCreated whenChanged
   ad_read "$dir" gplinks "$BASE_DN" sub '(gPLink=*)' gPLink
@@ -2020,6 +2059,32 @@ capability_ad_assessment() {
     : >"${dir}/dns-forest.ldif"
     printf '%s\n' "the forest root could not be read from the rootDSE, so the ForestDnsZones partition was not looked in" >"${dir}/dns-forest.said"
   fi
+
+  # WO-1016-N40 item 2. The password policy: the domain's own object, which
+  # also carries the identifier the privileged groups are named by, and every
+  # password settings object in the domain, wherever it is kept.
+  ad_read "$dir" domain "$BASE_DN" base '(objectClass=*)' \
+    objectSid minPwdLength pwdHistoryLength pwdProperties maxPwdAge minPwdAge \
+    lockoutThreshold lockoutDuration lockOutObservationWindow
+  ad_read "$dir" psos "$BASE_DN" sub '(objectClass=msDS-PasswordSettings)' \
+    name msDS-PasswordSettingsPrecedence msDS-PSOAppliesTo msDS-MinimumPasswordLength \
+    msDS-PasswordHistoryLength msDS-PasswordComplexityEnabled msDS-PasswordReversibleEncryptionEnabled \
+    msDS-MaximumPasswordAge msDS-MinimumPasswordAge msDS-LockoutThreshold msDS-LockoutDuration \
+    msDS-LockoutObservationWindow
+
+  # Replication: each of this domain's controllers is asked, at its own host,
+  # for its rootDSE's msDS-ReplAllInboundNeighbors. The hosts are the ones the
+  # directory names, and a name that is not a plain host name is not asked.
+  ad_read "$dir" servers "CN=Sites,CN=Configuration,${BASE_DN}" sub '(objectClass=server)' dNSHostName
+  local repl=0 dc_host
+  while IFS= read -r dc_host; do
+    case "$dc_host" in
+      ''|*[!A-Za-z0-9.-]*) continue ;;
+    esac
+    repl=$((repl + 1))
+    printf '%s\n' "$dc_host" >"${dir}/repl-${repl}.host"
+    ad_read_at "$dc_host" "$dir" "repl-${repl}" "" base '(objectClass=*)' msDS-ReplAllInboundNeighbors
+  done < <(ad_dc_hosts "$dir")
 
   # What the reads did, counted, before anything is sent. Each failure's words go
   # to the portal inside the check it belongs to, not here.

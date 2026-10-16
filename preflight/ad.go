@@ -53,11 +53,8 @@ var adCheckIDs = []string{
 
 // Why each check this reader does not yet read is not read. Stated per check.
 var adNotRead = map[string]string{
-	"password-policy":      "This version of the appliance's directory reader does not read the password and lockout policy yet.",
-	"privileged-groups":    "This version of the appliance's directory reader does not read privileged group membership yet: it needs nested membership resolved, which is the next slice.",
-	"ou-delegation":        "This version of the appliance's directory reader does not read permissions on organizational units: they are security descriptors, which it does not parse yet.",
-	"gpo-settings":         "Group Policy setting values are kept in files on SYSVOL, not in the directory, and the appliance does not read SYSVOL.",
-	"replication-failures": "This version of the appliance's directory reader does not read replication failures yet: they are read from each domain controller in turn, which is the next slice.",
+	"ou-delegation": "This version of the appliance's directory reader does not read permissions on organizational units: they are security descriptors, which it does not parse yet.",
+	"gpo-settings":  "Group Policy setting values are kept in files on SYSVOL, not in the directory, and the appliance does not read SYSVOL.",
 }
 
 type adCheck struct {
@@ -558,6 +555,9 @@ func buildAdChecks(dir, baseDN string, collectedAt time.Time) []adCheck {
 	built["gpo-inventory"] = gpoInventoryCheck(readAdDir(dir, "gpos"), readAdDir(dir, "gplinks"))
 	built["domain-controllers"] = domainControllersCheck(readAdDir(dir, "dcs"), baseDN)
 	built["dns-zones"] = dnsZonesCheck([]adRead{readAdDir(dir, "dns-domain"), readAdDir(dir, "dns-system"), readAdDir(dir, "dns-forest")})
+	built["password-policy"] = passwordPolicyCheck(readAdDir(dir, "domain"), readAdDir(dir, "psos"))
+	built["privileged-groups"] = privilegedGroupsCheck(readAdDir(dir, "domain"), readAdDir(dir, "groups"), readAdDir(dir, "users"))
+	built["replication-failures"] = replicationFailuresCheck(readAdDir(dir, "dcs"), readAdDir(dir, "servers"), readReplDir(dir), baseDN)
 	out := make([]adCheck, 0, len(adCheckIDs))
 	for _, id := range adCheckIDs {
 		if check, ok := built[id]; ok {

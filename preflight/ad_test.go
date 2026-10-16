@@ -93,6 +93,7 @@ func fixtureDir(t *testing.T) string {
 	writeRead(t, dir, "dns-forest", strings.Join([]string{
 		"dn: DC=_msdcs.example.test,CN=MicrosoftDNS,DC=ForestDnsZones," + adBase, "dc: _msdcs.example.test", "",
 	}, "\n"), 0, "")
+	secondSliceFixture(t, dir)
 	return dir
 }
 
@@ -114,7 +115,7 @@ func TestEveryDeclaredCheckIsSentInTheScriptsOrder(t *testing.T) {
 			t.Fatalf("check %d is %s, want %s", i, checks[i].ID, id)
 		}
 	}
-	for _, id := range []string{"password-policy", "privileged-groups", "ou-delegation", "gpo-settings", "replication-failures"} {
+	for _, id := range []string{"ou-delegation", "gpo-settings"} {
 		c := byID(checks)[id]
 		if c.State != "could-not-answer" || c.Reason == "" {
 			t.Fatalf("%s is %q with reason %q; a check not read must say why", id, c.State, c.Reason)

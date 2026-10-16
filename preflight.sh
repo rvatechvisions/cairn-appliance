@@ -1979,6 +1979,31 @@ ad_read() {
   ad_read_at "$DC" "$@"
 }
 
+# The two reads under the sites: every nTDSDSA, and every server object above
+# one. WO-1016-N41 item 3. The sites live in the configuration partition, which
+# belongs to the forest rather than to this domain, so its name is read from the
+# rootDSE's configurationNamingContext (Microsoft's rootDSE reference, updated
+# 12 March 2025, read 16 October 2026) and never built from this domain's DN,
+# which names it only in a forest root domain. A name that could not be read is
+# both reads not made, said in each, never a guess.
+ad_site_reads() {
+  local dir="$1" root_dse config_dn name out
+  root_dse="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "" -s base configurationNamingContext 2>&1)"
+  config_dn="$(printf '%s\n' "$root_dse" | sed -n 's/^configurationNamingContext: //p')"
+  if [ -z "$config_dn" ]; then
+    for name in dcs servers; do
+      # Every file this read would have left, named once. It writes files and prints nothing.
+      out="${dir}/${name}"
+      printf '%s\n' 255 >"${out}.status"
+      : >"${out}.ldif"
+      printf '%s\n' "the configuration partition's name could not be read from the rootDSE, so the sites were not looked in" >"${out}.said"
+    done
+    return 0
+  fi
+  ad_read "$dir" dcs "CN=Sites,${config_dn}" sub '(objectClass=nTDSDSA)' msDS-hasDomainNCs hasMasterNCs
+  ad_read "$dir" servers "CN=Sites,${config_dn}" sub '(objectClass=server)' dNSHostName
+}
+
 # The host of every domain controller holding this domain, from two reads
 # already made: each nTDSDSA naming this domain, and the server object above
 # it, which carries dNSHostName. WO-1016-N40 item 2. A list the directory
@@ -2045,8 +2070,7 @@ capability_ad_assessment() {
   ad_read "$dir" gpos "CN=Policies,CN=System,${BASE_DN}" one '(objectClass=groupPolicyContainer)' \
     cn displayName flags whenCreated whenChanged
   ad_read "$dir" gplinks "$BASE_DN" sub '(gPLink=*)' gPLink
-  ad_read "$dir" dcs "CN=Sites,CN=Configuration,${BASE_DN}" sub '(objectClass=nTDSDSA)' \
-    msDS-hasDomainNCs hasMasterNCs
+  ad_site_reads "$dir"
   ad_read "$dir" dns-domain "CN=MicrosoftDNS,DC=DomainDnsZones,${BASE_DN}" one '(objectClass=dnsZone)' dc
   ad_read "$dir" dns-system "CN=MicrosoftDNS,CN=System,${BASE_DN}" one '(objectClass=dnsZone)' dc
   local root_out forest_dn
@@ -2075,7 +2099,6 @@ capability_ad_assessment() {
   # Replication: each of this domain's controllers is asked, at its own host,
   # for its rootDSE's msDS-ReplAllInboundNeighbors. The hosts are the ones the
   # directory names, and a name that is not a plain host name is not asked.
-  ad_read "$dir" servers "CN=Sites,CN=Configuration,${BASE_DN}" sub '(objectClass=server)' dNSHostName
   local repl=0 dc_host
   while IFS= read -r dc_host; do
     case "$dc_host" in

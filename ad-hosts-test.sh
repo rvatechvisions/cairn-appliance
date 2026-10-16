@@ -92,6 +92,65 @@ esac
 got="$(ad_dc_hosts "$DIR")"
 [ -z "$got" ] && pass "no controller listed is no host asked, never a guess" || fail "hosts from nothing: '${got}'"
 
+# --- where the sites are read, in a child domain (WO-1016-N41 item 3) ----------
+#
+# The sites live in the forest's configuration partition. In a child domain that
+# partition is named after the forest root, not after the domain being read, so
+# the base is taken from the rootDSE and never built from BASE_DN.
+
+for name in ad_read_at ad_read ad_site_reads; do
+  lifted="$(sed -n "/^${name}() {\$/,/^}\$/p" "$SCRIPT")"
+  if [ -z "$lifted" ]; then
+    echo "FATAL: preflight.sh defines no ${name}(), so there is nothing to test."
+    exit 2
+  fi
+  eval "$lifted"
+done
+tool_said() { printf '%s' "$1"; }
+
+# ldapsearch answers the rootDSE with ROOTDSE_ANSWER, and records every base it
+# is asked for, so the test reads which partition each read went to.
+ASKED="${DIR}/asked"
+ldapsearch() {
+  local base="" previous=""
+  for argument in "$@"; do
+    [ "$previous" = "-b" ] && base="$argument"
+    previous="$argument"
+  done
+  printf '%s\n' "$base" >>"$ASKED"
+  if [ -z "$base" ]; then
+    printf '%b\n' "$ROOTDSE_ANSWER"
+    return 0
+  fi
+  printf 'dn: %s\n' "$base"
+}
+
+DC="dc1.child.example.test"
+BASE_DN="DC=child,DC=example,DC=test"
+SITES_DIR="$(mktemp -d)"
+: >"$ASKED"
+ROOTDSE_ANSWER="dn:\nconfigurationNamingContext: CN=Configuration,DC=example,DC=test"
+ad_site_reads "$SITES_DIR"
+if grep -qx 'CN=Sites,CN=Configuration,DC=example,DC=test' "$ASKED" && ! grep -q 'CN=Configuration,DC=child' "$ASKED" \
+   && [ "$(cat "${SITES_DIR}/dcs.status")" = "0" ] && [ "$(cat "${SITES_DIR}/servers.status")" = "0" ]; then
+  pass "in a child domain both sites reads ask the forest's configuration partition, never one under the child's DN"
+else
+  fail "the sites were asked under: $(tr '\n' ' ' <"$ASKED")"
+fi
+
+: >"$ASKED"
+rm -f "${SITES_DIR}"/*
+ROOTDSE_ANSWER="dn:"
+ad_site_reads "$SITES_DIR"
+asked_lines=$(wc -l <"$ASKED")
+if [ "$asked_lines" -eq 1 ] && [ -z "$(cat "$ASKED")" ] && [ "$(cat "${SITES_DIR}/dcs.status")" = "255" ] \
+   && grep -q "configuration partition's name could not be read" "${SITES_DIR}/servers.said"; then
+  pass "a rootDSE that names no configuration partition makes neither read, and says why in each"
+else
+  fail "with no partition named: asked $(tr '\n' ' ' <"$ASKED"); dcs status $(cat "${SITES_DIR}/dcs.status" 2>&1)"
+fi
+rm -rf "$SITES_DIR"
+
 echo
 if [ $failures -ne 0 ]; then
   echo "FAIL: ${failures} host-list assertion(s) failed."

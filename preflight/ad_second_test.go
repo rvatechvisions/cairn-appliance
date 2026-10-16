@@ -247,6 +247,35 @@ func TestAControllerThatCouldNotBeAskedIsNamedNotSkipped(t *testing.T) {
 	}
 }
 
+// WO-1016-N41 item 3: in a child domain the sites are under the forest root's
+// configuration partition, so every DN in these two reads ends in the forest's
+// name, not the child's.
+func TestAChildDomainsControllersAreReadFromTheForestsSites(t *testing.T) {
+	dir := t.TempDir()
+	const child = "DC=child," + adBase
+	const sites = "CN=Sites,CN=Configuration," + adBase
+	writeRead(t, dir, "dcs", strings.Join([]string{
+		"dn: CN=NTDS Settings,CN=CHILDDC1,CN=Servers,CN=Main-Site," + sites, "msDS-hasDomainNCs: " + child, "",
+		"dn: CN=NTDS Settings,CN=ROOTDC1,CN=Servers,CN=Main-Site," + sites, "msDS-hasDomainNCs: " + adBase, "",
+	}, "\n"), 0, "")
+	writeRead(t, dir, "servers", strings.Join([]string{
+		"dn: CN=CHILDDC1,CN=Servers,CN=Main-Site," + sites, "dNSHostName: childdc1.child.example.test", "",
+		"dn: CN=ROOTDC1,CN=Servers,CN=Main-Site," + sites, "dNSHostName: rootdc1.example.test", "",
+	}, "\n"), 0, "")
+	writeRead(t, dir, "repl-1", "dn:\n", 0, "")
+	if err := os.WriteFile(filepath.Join(dir, "repl-1.host"), []byte("childdc1.child.example.test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dcs := domainControllersCheck(readAdDir(dir, "dcs"), child)
+	if dcs.State != "found" || dcs.Count != 1 || dcs.Items[0]["name"] != "CHILDDC1" || dcs.Items[0]["domain"] != "child.example.test" {
+		t.Fatalf("controllers: %+v", dcs)
+	}
+	repl := replicationFailuresCheck(readAdDir(dir, "dcs"), readAdDir(dir, "servers"), readReplDir(dir), child)
+	if repl.State != "not-found" || *repl.Examined != 1 || strings.Contains(repl.Note, "rootdc1") {
+		t.Fatalf("replication: %+v", repl)
+	}
+}
+
 func TestAControllerTheDirectoryNamesNoHostForIsSaid(t *testing.T) {
 	dir := fixtureDir(t)
 	writeRead(t, dir, "servers", "dn: "+dc1Server+"\n", 0, "")

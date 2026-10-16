@@ -51,7 +51,7 @@
 step_capability() {
   case "$1" in
     kerberos) printf 'PREREQUISITE\n' ;;
-    ldap|dns-zones|dhcp-authorized) printf 'ad\n' ;;
+    ldap|dns-zones|dhcp-authorized|ad-assessment) printf 'ad\n' ;;
     dhcp) printf 'dhcp\n' ;;
     zabbix) printf 'zabbix\n' ;;
     vsphere) printf 'vsphere\n' ;;

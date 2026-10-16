@@ -362,6 +362,11 @@ func main() {
 		"read the guests the Proxmox VE cluster the portal names lists, and submit six fields per guest, signed")
 	collectMecmSystems := flag.Bool("collect-mecm", false,
 		"read the systems the Configuration Manager site the portal names has discovered, and submit five fields per system, signed")
+	collectAdChecks := flag.Bool("collect-ad", false,
+		"turn the directory reads the shell wrote to -ldif-dir into the Active Directory checks, and submit them, signed")
+	ldifDir := flag.String("ldif-dir", "", "for -collect-ad: the directory the shell wrote each LDAP read, its exit status and its words into")
+	baseDN := flag.String("base-dn", "", "for -collect-ad: the domain's naming context, such as DC=example,DC=com")
+	collectedAtFlag := flag.String("collected-at", "", "for -collect-ad: when the shell began the reads, RFC 3339; absent means now")
 	relay := flag.Bool("relay", false,
 		"make the portal's checked read requests to the targets it names, for up to -relay-for")
 	relayFor := flag.Duration("relay-for", 10*time.Minute, "how long -relay asks the portal for work")
@@ -411,7 +416,7 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *collectProxmoxGuests || *relay || *update {
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *collectProxmoxGuests || *collectAdChecks || *relay || *update {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
 				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix, -collect-vsphere, -collect-mecm or -collect-proxmox")
@@ -497,6 +502,33 @@ func main() {
 			if err := collectRelay(*portalURL, bound, private, *relayFor); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				if errors.Is(err, errRelayNotAsked) {
+					os.Exit(3)
+				}
+				os.Exit(1)
+			}
+			return
+		}
+
+		if *collectAdChecks {
+			// Exit 3 is a run that asked nothing: Active Directory not granted, or
+			// no credential. Exit 2 is the shell's mistake, no reads directory or no
+			// domain named. Anything else that fails is exit 1. WO-1016-N39 item 3.
+			if *ldifDir == "" || *baseDN == "" {
+				fmt.Fprintln(os.Stderr, "preflight: -collect-ad needs -ldif-dir and -base-dn")
+				os.Exit(2)
+			}
+			collectedAt := time.Now()
+			if *collectedAtFlag != "" {
+				parsed, err := time.Parse(time.RFC3339, *collectedAtFlag)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "preflight: -collected-at is not RFC 3339:", err)
+					os.Exit(2)
+				}
+				collectedAt = parsed
+			}
+			if err := collectAd(*portalURL, bound, private, *ldifDir, *baseDN, collectedAt); err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				if errors.Is(err, errAdNotAsked) {
 					os.Exit(3)
 				}
 				os.Exit(1)

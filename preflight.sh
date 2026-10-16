@@ -1941,6 +1941,135 @@ capability_authorized_servers() {
 run_capability dhcp-authorized capability_authorized_servers || true
 
 # ---------------------------------------------------------------------------
+# The Active Directory assessment, read over LDAP. WO-1016-N39 item 3, option A
+# of AD-COLLECTION-DESIGN.md in the portal repository, approved by Jackie Ramsey
+# in Asana on 16 October 2026.
+#
+# The reads the script assess-ad.ps1 makes on a domain controller, made here over
+# the Kerberos session this run already holds: read-only, from a box that is not
+# joined to the domain, with a credential fetched from the portal for this run.
+# Each read goes to a file in this run's own memory directory, with ldapsearch's
+# exit status and its words beside it, and the binary turns the files into the
+# checks and sends them. The directory is removed when the run ends, whatever
+# the run did.
+#
+# Gated by ad, like every LDAP read here. A read that fails is sent as a check
+# that could not answer, naming why: the binary never sees an empty file as an
+# empty answer, because the status beside it says what happened.
+# ---------------------------------------------------------------------------
+rule "4a. Active Directory checks, over LDAP"
+
+# One read: ldapsearch's output, exit status and the words it gave, under a name.
+ad_read() {
+  local dir="$1" name="$2" base="$3" scope="$4" filter="$5"
+  shift 5
+  # Every file this read leaves, named once. It writes files and prints
+  # nothing: the step prints one counted line once every read is made.
+  local out="${dir}/${name}" status=0 said
+  ldapsearch -LLL -E pr=1000/noprompt -Y GSSAPI -H "ldap://${DC}" -b "$base" -s "$scope" "$filter" "$@" \
+    >"${out}.ldif" 2>"${out}.err" || status=$?
+  printf '%s\n' "$status" >"${out}.status"
+  said="$(tool_said "$(cat "${out}.err")")"
+  printf '%s\n' "$said" >"${out}.said"
+}
+
+capability_ad_assessment() {
+  if [ "$LDAP_OK" -ne 0 ]; then
+    say "NOT ASKED: the directory did not answer, so this cannot be asked separately."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  local binary="${HERE}/preflight/preflight"
+  if [ ! -x "$binary" ]; then
+    say "NOT RUN: there is no preflight binary at ${binary}; that is a fault in this installation, not in the network."
+    NOTRUN=$((NOTRUN + 1))
+    return 1
+  fi
+  if [ -z "${CAIRN_PORTAL:-}" ]; then
+    say "NOT ASKED: no portal is named, so there is nowhere to send the checks."
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+
+  local dir="${CCDIR}/ad" started
+  mkdir -m 700 "$dir" || {
+    say "NOT RUN: this run could not make its own directory for the reads; that is this box, not the domain."
+    NOTRUN=$((NOTRUN + 1))
+    return 1
+  }
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  ad_read "$dir" users "$BASE_DN" sub '(&(objectCategory=person)(objectClass=user))' \
+    sAMAccountName name userAccountControl lastLogonTimestamp whenCreated
+  ad_read "$dir" groups "$BASE_DN" sub '(objectClass=group)' \
+    name groupType whenCreated managedBy member
+  ad_read "$dir" gpos "CN=Policies,CN=System,${BASE_DN}" one '(objectClass=groupPolicyContainer)' \
+    cn displayName flags whenCreated whenChanged
+  ad_read "$dir" gplinks "$BASE_DN" sub '(gPLink=*)' gPLink
+  ad_read "$dir" dcs "CN=Sites,CN=Configuration,${BASE_DN}" sub '(objectClass=nTDSDSA)' \
+    msDS-hasDomainNCs hasMasterNCs
+  ad_read "$dir" dns-domain "CN=MicrosoftDNS,DC=DomainDnsZones,${BASE_DN}" one '(objectClass=dnsZone)' dc
+  ad_read "$dir" dns-system "CN=MicrosoftDNS,CN=System,${BASE_DN}" one '(objectClass=dnsZone)' dc
+  local root_out forest_dn
+  root_out="$(ldapsearch -LLL -Y GSSAPI -H "ldap://${DC}" -b "" -s base rootDomainNamingContext 2>&1)"
+  forest_dn="$(printf '%s\n' "$root_out" | sed -n 's/^rootDomainNamingContext: //p')"
+  if [ -n "$forest_dn" ]; then
+    ad_read "$dir" dns-forest "CN=MicrosoftDNS,DC=ForestDnsZones,${forest_dn}" one '(objectClass=dnsZone)' dc
+  else
+    printf '%s\n' 255 >"${dir}/dns-forest.status"
+    : >"${dir}/dns-forest.ldif"
+    printf '%s\n' "the forest root could not be read from the rootDSE, so the ForestDnsZones partition was not looked in" >"${dir}/dns-forest.said"
+  fi
+
+  # What the reads did, counted, before anything is sent. Each failure's words go
+  # to the portal inside the check it belongs to, not here.
+  local made=0 completed=0 status_file
+  for status_file in "${dir}"/*.status; do
+    made=$((made + 1))
+    [ "$(cat "$status_file")" = "0" ] && completed=$((completed + 1))
+  done
+  say "  ${completed} of ${made} directory reads completed."
+
+  local output status=0 said
+  output="$(mktemp)"
+  "$binary" -portal "${CAIRN_PORTAL}" -collect-ad -ldif-dir "$dir" -base-dn "$BASE_DN" -collected-at "$started" \
+    >"$output" 2>&1 || status=$?
+  rm -rf "$dir"
+  cat "$output"
+  said="$(grep '^preflight: ' "$output" | tail -n 1)"
+  said="${said#preflight: }"
+  local unknown_flag=0
+  grep -q 'flag provided but not defined: -collect-ad' "$output" && unknown_flag=1
+  rm -f "$output"
+
+  if [ "$status" -eq 0 ]; then
+    FOUND=$((FOUND + 1))
+    return 0
+  fi
+  if [ "$unknown_flag" -eq 1 ]; then
+    say "NOT RUN: this box's binary predates the directory reader, so the checks were read and not sent. That is this box's software, not the domain."
+    NOTRUN=$((NOTRUN + 1))
+    return 1
+  fi
+  if [ "$status" -eq 3 ]; then
+    say "NOT ASKED: ${said:-the binary gave no reason}"
+    UNASKED=$((UNASKED + 1))
+    return 1
+  fi
+  case "$said" in
+    "refused ("*|*": refused ("*|*"the portal refused "*)
+      say "COULD NOT TELL: Cairn's portal refused what this box sent for the directory checks, so this is not a refusal by the domain: ${said}"
+      ;;
+    *)
+      say "COULD NOT TELL: the directory checks were not sent, and this run cannot tell why from the domain's side: ${said:-the binary gave no reason}"
+      ;;
+  esac
+  UNTOLD=$((UNTOLD + 1))
+  return 1
+}
+run_capability ad-assessment capability_ad_assessment || true
+
+# ---------------------------------------------------------------------------
 # 5. DHCP over MS-DHCPM
 #
 # The only capability here that is not a shell tool. It is a small Go program

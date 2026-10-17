@@ -37,7 +37,9 @@ func defaultPolicyTemplate() []byte {
 		`MACHINE\System\CurrentControlSet\Control\Lsa\NoLMHash=4,1`,
 		`MACHINE\System\CurrentControlSet\Control\Lsa\LmCompatibilityLevel=4,5`,
 		`machine\software\microsoft\windows\currentversion\policies\system\inactivitytimeoutsecs=4,900`,
-		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText=7,Authorized use only`,
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText=1,"Authorized use only"`,
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeCaption=1,"Notice"`,
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\DontDisplayLastUserName=4,1`,
 	)
 }
 
@@ -62,34 +64,51 @@ func TestOnlyTheNamedValuesAreRead(t *testing.T) {
 	dir := fixtureDir(t)
 	reader := &recordingReader{files: map[string][]byte{defaultPolicyGUID: defaultPolicyTemplate()}}
 	c := gpoSettingsCheck(readAdDir(dir, "gpos"), readAdDir(dir, "gplinks"), reader.read, nil)
-	if c.State != "found" || c.Count != 2 || c.Examined == nil || *c.Examined != 1 {
+	if c.State != "found" || c.Count != 4 || c.Examined == nil || *c.Examined != 1 {
 		t.Fatalf("got %s count %d examined %v: %+v", c.State, c.Count, c.Examined, c)
 	}
-	got := map[string]any{}
+	got := map[string]map[string]any{}
 	for _, item := range c.Items {
 		keys := []string{}
 		for k := range item {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		if strings.Join(keys, ",") != "id,name,policy,setting,value" {
-			t.Fatalf("an item carries %v; only the setting, its policy, its value and its object leave", keys)
+		want := "id,name,policy,setting,value"
+		if strings.HasPrefix(item["setting"].(string), "logon-message") {
+			want = "id,length,name,policy,set,setting"
+		}
+		if strings.Join(keys, ",") != want {
+			t.Fatalf("%v carries %v; only %s leave", item["setting"], keys, want)
 		}
 		if item["id"] != defaultPolicyGUID || item["name"] != "Default Domain Policy" {
 			t.Fatalf("an item names %v %v, not the object it came from", item["name"], item["id"])
 		}
-		got[item["setting"].(string)] = item["value"]
+		got[item["setting"].(string)] = item
 	}
-	if got["inactivity-limit"] != int64(900) || got["lan-manager-level"] != int64(5) {
+	if got["inactivity-limit"]["value"] != int64(900) || got["lan-manager-level"]["value"] != int64(5) {
 		t.Fatalf("values read %v, want 900 seconds and level 5", got)
 	}
+	if got["logon-message"]["set"] != true || got["logon-message"]["length"] != 19 || got["logon-message-title"]["length"] != 6 {
+		t.Fatalf("the notice read %v and %v, want set, 19 and 6 characters", got["logon-message"], got["logon-message-title"])
+	}
 	for _, item := range c.Items {
-		if item["setting"] == "logon-message" {
-			t.Fatalf("the sign-in notice was read, and its registry name was never read from a source: %v", item)
+		for _, v := range item {
+			if s, ok := v.(string); ok && strings.Contains(s, "Authorized use only") {
+				t.Fatalf("the notice's words left the box: %v", item)
+			}
 		}
 	}
-	if !strings.Contains(c.Note, "sign-in notice") || !strings.Contains(c.Note, "is not read") {
-		t.Fatalf("the note must name the sign-in notice as not read: %q", c.Note)
+	if _, read := got["dont-display-last-user-name"]; read || len(got) != 4 {
+		t.Fatalf("a value nobody named was read: %v", got)
+	}
+}
+
+func TestANoticeOfAnotherTypeIsUnreadNotGuessed(t *testing.T) {
+	values, err := parseGptTmpl(encodeGptTmpl("[Registry Values]",
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText=7,line one,line two`))
+	if err == nil || !strings.Contains(err.Error(), "logon-message") || !strings.Contains(err.Error(), "type 7") {
+		t.Fatalf("got %+v %v; a notice not stored as a string is named as unread", values, err)
 	}
 }
 

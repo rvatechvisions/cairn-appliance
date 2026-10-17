@@ -19,26 +19,28 @@ package main
 // Registry Values, updated 2024-04-23, and Message Syntax, updated
 // 2024-10-30, both read 17 October 2026).
 //
-// Two values are taken from that section, and nothing else in the file is
+// These values are taken from that section, and nothing else in the file is
 // kept:
 //   - inactivity-limit: MACHINE\Software\Microsoft\Windows\CurrentVersion\
 //     Policies\System\InactivityTimeoutSecs, a DWORD of seconds;
 //   - lan-manager-level: MACHINE\System\CurrentControlSet\Control\Lsa\
-//     LmCompatibilityLevel, a DWORD from 0 to 5.
+//     LmCompatibilityLevel, a DWORD from 0 to 5;
+//   - logon-message and logon-message-title: LegalNoticeText and
+//     LegalNoticeCaption under the same Policies\System key, strings.
 //
-// ## The sign-in notice is not read, and the check says so
+// ## The sign-in notice
 //
-// The order names three settings. For the third, no current Microsoft page
-// read on 17 October 2026 names the registry value the policy writes; only an
-// NT-era Winlogon key is documented. A value name written from convention is
-// an identifier nobody read, so the notice is not parsed, and the check's note
-// names it as not read rather than as absent.
+// ~~Not read: no current Microsoft page read on 17 October 2026 named the
+// registry value the policy writes.~~ Corrected where it stands by WO-1017-N55
+// item 7, the same day: a current Microsoft page names both values (see
+// gptSettings). They are read as strings only.
 //
 // ## What leaves
 //
-// For each value found, one item: the setting, the policy's display name, the
-// value, and the object it came from, by name and id. Nothing else from the
-// file, and no file that is not one of these.
+// For each value found, one item: the setting, the policy's display name, and
+// the object it came from, by name and id. A DWORD carries its value. The
+// notice carries whether it is set and its length in characters, never its
+// words. Nothing else from the file, and no file that is not one of these.
 //
 // ## Read-only, and the session ends
 //
@@ -73,23 +75,38 @@ type gptSetting struct {
 	setting string // the check's own name for it, the script's
 	policy  string // the policy's display name, the script's
 	value   string // the [Registry Values] name, compared without regard to case
+	text    bool   // a string (type 1) rather than a DWORD (type 4)
 }
 
-// gptSettings are the two values read. Held by TestOnlyTheNamedValuesAreRead.
+// gptSettings are the values read. Held by TestOnlyTheNamedValuesAreRead.
+//
+// The sign-in notice's two values were named by a current Microsoft page on
+// 17 October 2026, WO-1017-N55 item 7: "Manage security defaults for Azure
+// Local" (ms.date 2025-10-23) fixes the rules "Interactive logon: Message text
+// for users attempting to log on" and "... Message title ..." by setting
+// LegalNoticeText and LegalNoticeCaption under
+// HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System, as strings.
+// Only a string is read: another type is named as unread, never guessed at.
 var gptSettings = []gptSetting{
 	{"inactivity-limit", "Interactive logon: Machine inactivity limit",
-		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\InactivityTimeoutSecs`},
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\InactivityTimeoutSecs`, false},
 	{"lan-manager-level", "Network security: LAN Manager authentication level",
-		`MACHINE\System\CurrentControlSet\Control\Lsa\LmCompatibilityLevel`},
+		`MACHINE\System\CurrentControlSet\Control\Lsa\LmCompatibilityLevel`, false},
+	{"logon-message", "Interactive logon: Message text for users attempting to log on",
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText`, true},
+	{"logon-message-title", "Interactive logon: Message title for users attempting to log on",
+		`MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeCaption`, true},
 }
 
-const gptNotReadNotice = "The sign-in notice (Interactive logon: Message text for users attempting to log on) is not read: no current Microsoft page read names the registry value it writes, so its absence here says nothing about whether any object sets it."
-
-// gptValue is one value found, as a number.
+// gptValue is one value found. A DWORD leaves as its number. A notice leaves
+// as whether it is set and its length in characters, never its words: those
+// are the client's own text, and whether a notice is shown is the question.
 type gptValue struct {
 	setting string
 	policy  string
 	number  int64
+	text    bool
+	length  int
 }
 
 // decodeGptTmpl turns the file's bytes into text. MS-GPSB says Unicode, and a
@@ -150,6 +167,14 @@ func parseGptTmpl(raw []byte) ([]gptValue, error) {
 		typeText, valueText, ok := strings.Cut(line[eq+1:], ",")
 		if !ok {
 			return nil, fmt.Errorf("%s is set with no type and value", wanted.setting)
+		}
+		if wanted.text {
+			if strings.TrimSpace(typeText) != "1" {
+				return nil, fmt.Errorf("%s is set with type %s, and only a string (type 1) is read", wanted.setting, strings.TrimSpace(typeText))
+			}
+			words := strings.Trim(strings.TrimSpace(valueText), `"`)
+			out = append(out, gptValue{setting: wanted.setting, policy: wanted.policy, text: true, length: len([]rune(words))})
+			continue
 		}
 		if strings.TrimSpace(typeText) != "4" {
 			return nil, fmt.Errorf("%s is set with type %s, and only a DWORD (type 4) is read", wanted.setting, strings.TrimSpace(typeText))
@@ -237,10 +262,14 @@ func gpoSettingsCheck(gpos, links adRead, read gptFileReader, signOff error) adC
 			continue
 		}
 		for _, v := range values {
-			rows = append(rows, map[string]any{
-				"setting": v.setting, "policy": v.policy, "value": v.number,
-				"name": linked[guid], "id": guid,
-			})
+			row := map[string]any{"setting": v.setting, "policy": v.policy, "name": linked[guid], "id": guid}
+			if v.text {
+				row["set"] = v.length > 0
+				row["length"] = v.length
+			} else {
+				row["value"] = v.number
+			}
+			rows = append(rows, row)
 		}
 	}
 	if len(guids) > 0 && len(unread) == len(guids) {
@@ -249,7 +278,7 @@ func gpoSettingsCheck(gpos, links adRead, read gptFileReader, signOff error) adC
 	check := newAdCheck("gpo-settings", rows)
 	check.Examined = intp(len(guids))
 	note := fmt.Sprintf("Read from SYSVOL by the appliance: the value each linked object sets, from its security template. %d linked objects were looked at, %d carry a security template.", len(guids), withFile)
-	note += " " + gptNotReadNotice
+	note += " The sign-in notice is sent as whether it is set and its length, never its words."
 	if len(unread) > 0 {
 		note += fmt.Sprintf(" %d objects could not be read, so this is a lower bound: %s.", len(unread), strings.Join(unread, "; "))
 	}

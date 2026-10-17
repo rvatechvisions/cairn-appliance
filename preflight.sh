@@ -2138,10 +2138,19 @@ capability_ad_assessment() {
   done
   say "  ${completed} of ${made} directory reads completed."
 
+  # WO-1017-N54 item 3. The controller whose SYSVOL holds the Group Policy
+  # setting values, handed only to a binary that declares it reads them: an
+  # older binary would refuse the flag and lose every directory check with it.
+  # The binary opens SYSVOL only where SYSVOL is granted, on its own consent.
+  local sysvol_args=()
+  if binary_declares sysvol-read; then
+    sysvol_args=(-sysvol-host "$DC")
+  fi
+
   local output status=0 said
   output="$(mktemp)"
   "$binary" -portal "${CAIRN_PORTAL}" -collect-ad -ldif-dir "$dir" -base-dn "$BASE_DN" -collected-at "$started" \
-    >"$output" 2>&1 || status=$?
+    ${sysvol_args[@]+"${sysvol_args[@]}"} >"$output" 2>&1 || status=$?
   rm -rf "$dir"
   cat "$output"
   said="$(grep '^preflight: ' "$output" | tail -n 1)"

@@ -54,7 +54,7 @@ var adCheckIDs = []string{
 // Why each check this reader does not yet read is not read. Stated per check.
 var adNotRead = map[string]string{
 	"ou-delegation": "This version of the appliance's directory reader does not read permissions on organizational units: they are security descriptors, which it does not parse yet.",
-	"gpo-settings":  "Group Policy setting values are kept in files on SYSVOL, not in the directory, and the appliance does not read SYSVOL.",
+	"gpo-settings":  "Group Policy setting values are kept in files on SYSVOL, not in the directory, and reading them is its own permission, asked separately from the directory reads.",
 }
 
 type adCheck struct {
@@ -604,7 +604,7 @@ func buildAdSubmission(checks []adCheck, collectedAt time.Time, host, account, s
 var errAdNotAsked = errors.New("not asked")
 
 // collectAd is the -collect-ad mode: check the grant, build, sign, send.
-func collectAd(portal, fingerprint string, private ed25519.PrivateKey, dir, baseDN string, collectedAt time.Time) error {
+func collectAd(portal, fingerprint string, private ed25519.PrivateKey, dir, baseDN, sysvolHost string, collectedAt time.Time) error {
 	credential, err := fetchCredential(portal, fingerprint, private)
 	if err != nil {
 		return fmt.Errorf("%w: fetching the credential: %v", errAdNotAsked, err)
@@ -613,6 +613,11 @@ func collectAd(portal, fingerprint string, private ed25519.PrivateKey, dir, base
 		return fmt.Errorf("%w: Active Directory is not among what this organization has allowed the collector to read", errAdNotAsked)
 	}
 	checks := buildAdChecks(dir, baseDN, collectedAt)
+	for i := range checks {
+		if checks[i].ID == "gpo-settings" {
+			checks[i] = sysvolSettings(granted(credential, sysvolCapability), sysvolHost, baseDN, dir, readSysvol)
+		}
+	}
 	answered := 0
 	for _, check := range checks {
 		if check.State != "could-not-answer" {

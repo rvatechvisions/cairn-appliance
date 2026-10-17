@@ -142,8 +142,11 @@ var relayedHeaders = []string{"username", "realm", "controller", "capabilities",
 //   - signed-release: -update installs only what a signed release manifest
 //     names (release.go);
 //   - sessions-left-open: -collect-vsphere prints how many sessions it left
-//     open after every read, good or not (vsphere.go).
-var declaredAbilities = []string{"error-source", "signed-release", "sessions-left-open"}
+//     open after every read, good or not (vsphere.go);
+//   - sysvol-read: -collect-ad takes -sysvol-host and reads two Group Policy
+//     setting values from SYSVOL, where SYSVOL is granted (sysvol.go).
+//     WO-1017-N54 item 3.
+var declaredAbilities = []string{"error-source", "signed-release", "sessions-left-open", "sysvol-read"}
 
 // speaks is the -speaks answer: the credential-block lines this binary relays,
 // then what else it declares.
@@ -379,6 +382,7 @@ func main() {
 	ldifDir := flag.String("ldif-dir", "", "for -collect-ad: the directory the shell wrote each LDAP read, its exit status and its words into")
 	baseDN := flag.String("base-dn", "", "for -collect-ad: the domain's naming context, such as DC=example,DC=com")
 	collectedAtFlag := flag.String("collected-at", "", "for -collect-ad: when the shell began the reads, RFC 3339; absent means now")
+	sysvolHost := flag.String("sysvol-host", "", "for -collect-ad: the domain controller whose SYSVOL holds the Group Policy setting values, read only where the organization has granted SYSVOL")
 	relay := flag.Bool("relay", false,
 		"make the portal's checked read requests to the targets it names, for up to -relay-for")
 	relayFor := flag.Duration("relay-for", 10*time.Minute, "how long -relay asks the portal for work")
@@ -538,7 +542,7 @@ func main() {
 				}
 				collectedAt = parsed
 			}
-			if err := collectAd(*portalURL, bound, private, *ldifDir, *baseDN, collectedAt); err != nil {
+			if err := collectAd(*portalURL, bound, private, *ldifDir, *baseDN, *sysvolHost, collectedAt); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				if errors.Is(err, errAdNotAsked) {
 					os.Exit(3)
@@ -749,37 +753,9 @@ func bindDHCP(ctx context.Context, server, transport, targetName string, debug b
 	// than from flags of this program. Configuring the realm, the principal
 	// and the cache in two places is how the two copies come to disagree, and
 	// the one that is wrong is whichever is read less.
-	ccname := os.Getenv("KRB5CCNAME")
-	if ccname == "" {
-		return nil, nil, nil, ctx, fmt.Errorf("KRB5CCNAME is unset: this runs from preflight.sh, which sets it")
+	if err := setupKerberos(); err != nil {
+		return nil, nil, nil, ctx, err
 	}
-	// MIT writes it as a type-qualified name. Only FILE: is handled, because
-	// it is the only one preflight.sh creates -- and a MEMORY: cache could not
-	// be read by this process anyway, which is the lesson that put the ticket
-	// on tmpfs in the first place.
-	ccpath := strings.TrimPrefix(ccname, "FILE:")
-	if ccpath == ccname && strings.Contains(ccname, ":") {
-		return nil, nil, nil, ctx, fmt.Errorf("KRB5CCNAME is %q, and only a FILE: cache can be read here", ccname)
-	}
-
-	principal := os.Getenv("CAIRN_PRINCIPAL")
-	if principal == "" {
-		return nil, nil, nil, ctx, fmt.Errorf("CAIRN_PRINCIPAL is unset: this runs from preflight.sh, which sets it")
-	}
-
-	cache, err := credentials.LoadCCache(ccpath)
-	if err != nil {
-		return nil, nil, nil, ctx, fmt.Errorf("reading the ticket cache at %s: %w", ccpath, err)
-	}
-
-	// Kerberos only. No NTLM fallback, and that is deliberate: a fallback
-	// would let this succeed in a way the collector would not, and a probe
-	// that can pass where the real thing fails is worse than no probe.
-	//
-	// Naming KRB5 rather than SPNEGO makes that structural instead of hoped
-	// for -- there is no negotiation to fall back through.
-	gssapi.AddMechanism(ssp.KRB5)
-	gssapi.AddCredential(credential.NewFromCCache(principal, cache))
 
 	ctx = gssapi.NewSecurityContext(ctx)
 
@@ -861,6 +837,44 @@ func bindDHCP(ctx context.Context, server, transport, targetName string, debug b
 
 	fmt.Printf("bound: MS-DHCPM on %s (DHCPSRV and DHCPSRV2)\n", server)
 	return servers, clients, closer, ctx, nil
+}
+
+// setupKerberos hands the ticket preflight.sh already holds to the security
+// layer, for every reader that presents it: the DHCP RPC bind and the
+// SYSVOL session. One way this appliance presents its ticket, not two.
+func setupKerberos() error {
+	ccname := os.Getenv("KRB5CCNAME")
+	if ccname == "" {
+		return fmt.Errorf("KRB5CCNAME is unset: this runs from preflight.sh, which sets it")
+	}
+	// MIT writes it as a type-qualified name. Only FILE: is handled, because
+	// it is the only one preflight.sh creates -- and a MEMORY: cache could not
+	// be read by this process anyway, which is the lesson that put the ticket
+	// on tmpfs in the first place.
+	ccpath := strings.TrimPrefix(ccname, "FILE:")
+	if ccpath == ccname && strings.Contains(ccname, ":") {
+		return fmt.Errorf("KRB5CCNAME is %q, and only a FILE: cache can be read here", ccname)
+	}
+
+	principal := os.Getenv("CAIRN_PRINCIPAL")
+	if principal == "" {
+		return fmt.Errorf("CAIRN_PRINCIPAL is unset: this runs from preflight.sh, which sets it")
+	}
+
+	cache, err := credentials.LoadCCache(ccpath)
+	if err != nil {
+		return fmt.Errorf("reading the ticket cache at %s: %w", ccpath, err)
+	}
+
+	// Kerberos only. No NTLM fallback, and that is deliberate: a fallback
+	// would let this succeed in a way the collector would not, and a probe
+	// that can pass where the real thing fails is worse than no probe.
+	//
+	// Naming KRB5 rather than SPNEGO makes that structural instead of hoped
+	// for -- there is no negotiation to fall back through.
+	gssapi.AddMechanism(ssp.KRB5)
+	gssapi.AddCredential(credential.NewFromCCache(principal, cache))
+	return nil
 }
 
 func run(ctx context.Context, server string, scopeLimit int, transport, targetName string, debug bool) error {

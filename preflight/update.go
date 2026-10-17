@@ -36,11 +36,13 @@ package main
 //
 // ## What that leaves, stated
 //
-// The manifest and the bytes both come from the portal. A portal that was
+// ~~The manifest and the bytes both come from the portal. A portal that was
 // itself compromised could serve a matching pair; the separate response defends
-// against a corrupted or substituted object, not against the source. That is
-// the residual of the one-key decision, and it is the same trust the appliance
-// already places in the portal for its credential.
+// against a corrupted or substituted object, not against the source.~~
+// *Closed by slice 3, WO-1017-N47 item 1:* the digest now comes only from a
+// release manifest signed by a key the box trusts (release.go), so a portal
+// that serves a matching pair it made itself is refused. The appliance key
+// still authenticates the fetches; it no longer vouches for what is installed.
 
 import (
 	"bytes"
@@ -172,22 +174,49 @@ func installVerified(target string, want binaryManifest, content []byte) error {
 	return nil
 }
 
+// servedManifest is the portal's answer at binaryManifestPath. Slice 3
+// (release.go): the digest the box installs comes from Release, the manifest
+// Jackie's key signed, and never from the unsigned fields beside it, which
+// an older binary reads and this one ignores.
+type servedManifest struct {
+	binaryManifest
+	Release *signedRelease `json:"release"`
+}
+
 // runUpdate is the -update mode.
 func runUpdate(portal, fingerprint string, private ed25519.PrivateKey, target string) error {
+	return runUpdateWith(portal, fingerprint, private, target, trustedReleaseKeys, sequencePath(), time.Now())
+}
+
+// runUpdateWith is runUpdate with its trusted keys, its sequence file and its
+// clock named, so a test can drive every refusal.
+func runUpdateWith(portal, fingerprint string, private ed25519.PrivateKey, target string, trusted []string, sequenceFile string, now time.Time) error {
 	raw, err := signedFetch(portal, binaryManifestPath, fingerprint, private)
 	if err != nil {
 		return fmt.Errorf("could not read the manifest: %w", err)
 	}
-	var manifest binaryManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	var served servedManifest
+	if err := json.Unmarshal(raw, &served); err != nil {
 		return fmt.Errorf("the manifest did not parse: %w", err)
 	}
+	highest, err := highestApplied(sequenceFile)
+	if err != nil {
+		return fmt.Errorf("REFUSED: %w. Nothing was installed", err)
+	}
+	release, err := verifyRelease(served.Release, trusted, now, highest)
+	if err != nil {
+		return err
+	}
+	manifest := binaryManifest{Digest: release.Binary.Digest, Commit: release.Binary.Commit, Size: release.Binary.Size}
 	if err := validManifest(manifest); err != nil {
 		return err
 	}
 
 	if current, err := os.ReadFile(target); err == nil && digestOf(current) == strings.ToLower(manifest.Digest) {
-		fmt.Printf("already current: %s (%s)\n", manifest.Digest, manifest.Commit)
+		if err := recordApplied(sequenceFile, release.Sequence); err != nil {
+			return fmt.Errorf("already current, and the applied sequence could not be recorded: %w", err)
+		}
+		fmt.Printf("already current: %s (%s), signed release %d\n", manifest.Digest, manifest.Commit, release.Sequence)
 		return nil
 	}
 
@@ -198,6 +227,9 @@ func runUpdate(portal, fingerprint string, private ed25519.PrivateKey, target st
 	if err := installVerified(target, manifest, content); err != nil {
 		return err
 	}
-	fmt.Printf("installed %s (%s), verified before it was put in place\n", manifest.Digest, manifest.Commit)
+	if err := recordApplied(sequenceFile, release.Sequence); err != nil {
+		return fmt.Errorf("installed %s, and the applied sequence could not be recorded: %w", manifest.Digest, err)
+	}
+	fmt.Printf("installed %s (%s), signed release %d, verified before it was put in place\n", manifest.Digest, manifest.Commit, release.Sequence)
 	return nil
 }

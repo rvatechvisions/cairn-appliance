@@ -727,88 +727,7 @@ func main() {
 		// reached, a fault here -- so a person at the box read REFUSED directly
 		// above the shell's COULD NOT TELL. ERROR_ACCESS_DENIED is the one
 		// answer that is the DHCP service deciding, and the exit says so too.
-		denied := strings.Contains(err.Error(), "ERROR_ACCESS_DENIED")
-		if denied {
-			fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
-		} else {
-			fmt.Fprintf(os.Stderr, "the read of %s ended without a refusal by the server: %v\n", *server, err)
-		}
-
-		// Name the grant when the server names the grant.
-		//
-		// ERROR_ACCESS_DENIED here is the DHCP service ANSWERING, after the
-		// mapper resolved, the interface bound and Kerberos authenticated. It
-		// is a decision about what this account may read, and the whole of the
-		// answer is one group -- so saying so beats leaving a Win32 code to be
-		// looked up. It arrives at the end of a long run where every earlier
-		// layer looks fine, which is exactly when a bare code reads as
-		// something being broken.
-		if denied {
-			account := accountName(os.Getenv("CAIRN_PRINCIPAL"))
-			fmt.Fprintf(os.Stderr, "\n"+
-				"  THE SERVER ANSWERED. Everything below this is working: the endpoint\n"+
-				"  mapper resolved, the interface bound, Kerberos authenticated, and the\n"+
-				"  call was dispatched. What it refused is the READ.\n"+
-				"\n"+
-				"  FIRST, whether the account holds the grant at all:\n"+
-				"\n"+
-				"    Get-ADPrincipalGroupMembership %s | Select-Object Name\n"+
-				"\n"+
-				"  DHCP Users is read-only on the DHCP service and is the whole grant\n"+
-				"  this appliance asks for. If it is absent:\n"+
-				"\n"+
-				"    Add-ADGroupMember -Identity \"DHCP Users\" -Members %s\n"+
-				"\n"+
-				"  Membership travels in the Kerberos ticket and preflight takes a\n"+
-				"  fresh one each run, so nothing on THIS box needs restarting.\n"+
-				"\n"+
-				"  THAT IS NOT THE SAME AS NOTHING NEEDING A RESTART. The DHCP Server\n"+
-				"  service resolves the DHCP Users and DHCP Administrators SIDs on its\n"+
-				"  own schedule, and an account added after it did so is a documented\n"+
-				"  cause of exactly this refusal WITH the membership present. Neither\n"+
-				"  way is asserted here. The test is one command on the DC:\n"+
-				"\n"+
-				"    Restart-Service DHCPServer\n"+
-				"\n"+
-				"  Re-run afterwards. If it answers, that was the cause and it belongs\n"+
-				"  in onboarding, because every future client hits it.\n"+
-				"\n"+
-				"  IF IT IS ALREADY THERE, this is not the answer and the refusal is\n"+
-				"  something else. Seen on RVA's own domain, 20 September 2026, with the\n"+
-				"  membership present. What separates the possibilities is asking the\n"+
-				"  same question from Windows as the same account. Use runas /netonly:\n"+
-				"  it keeps the local session as whoever you are and sends only the\n"+
-				"  NETWORK request as this account, so it needs no logon rights\n"+
-				"  anywhere. Do NOT use Invoke-Command -- that is WinRM, it needs\n"+
-				"  Remote Management Users, and its refusal is about the session\n"+
-				"  rather than about DHCP.\n"+
-				"\n"+
-				"    runas /netonly /user:DOMAIN\\%s \"powershell -NoExit\"\n"+
-				"    Get-DhcpServerv4Scope -ComputerName <the DHCP server>\n"+
-				"\n"+
-				"  Without the RSAT module, netsh asks the same interface:\n"+
-				"\n"+
-				"    netsh dhcp server \\\\<the DHCP server> show scope\n"+
-				"\n"+
-				"  Refused there too, and the grant is genuinely not sufficient on this\n"+
-				"  server, which is a question for whoever administers it. Answered\n"+
-				"  there, and the account can read DHCP while THIS probe cannot, which\n"+
-				"  makes it ours.\n"+
-				"\n"+
-				"  AND ONE MORE, WHICH IS A PRODUCT QUESTION RATHER THAN A LAB ONE.\n"+
-				"  Add the account to DHCP Administrators temporarily and re-run. If\n"+
-				"  that is what R_DhcpEnumSubnets takes on this server, then this\n"+
-				"  appliance CANNOT BE READ-ONLY ON DHCP, and what a district is asked\n"+
-				"  to grant changes. Find out on a domain where being wrong is cheap,\n"+
-				"  and record the answer either way -- DHCP Users is sufficient is\n"+
-				"  worth as much written down as the alternative. Remove the\n"+
-				"  membership afterwards; it is a test, not a configuration.\n",
-				account, account, account)
-		}
-		if denied {
-			os.Exit(exitFarEndRefused)
-		}
-		os.Exit(1)
+		os.Exit(probeFailure(os.Stderr, *server, err))
 	}
 }
 
@@ -1102,4 +1021,93 @@ func formatIPv4(address uint32) string {
 		byte(address>>8),
 		byte(address),
 	).String()
+}
+
+// probeFailure says what the DHCP probe's failure was and returns the exit
+// status: REFUSED and exitFarEndRefused only for ERROR_ACCESS_DENIED, the DHCP
+// service's own answer, and neither for anything else. Taken out of main() by
+// WO-1017-N48 item 2 so a test can drive it; what it prints is unchanged.
+func probeFailure(w io.Writer, server string, err error) int {
+	denied := strings.Contains(err.Error(), "ERROR_ACCESS_DENIED")
+	if denied {
+		fmt.Fprintf(w, "REFUSED by %s: %v\n", server, err)
+	} else {
+		fmt.Fprintf(w, "the read of %s ended without a refusal by the server: %v\n", server, err)
+	}
+
+	// Name the grant when the server names the grant.
+	//
+	// ERROR_ACCESS_DENIED here is the DHCP service ANSWERING, after the
+	// mapper resolved, the interface bound and Kerberos authenticated. It
+	// is a decision about what this account may read, and the whole of the
+	// answer is one group -- so saying so beats leaving a Win32 code to be
+	// looked up. It arrives at the end of a long run where every earlier
+	// layer looks fine, which is exactly when a bare code reads as
+	// something being broken.
+	if denied {
+		account := accountName(os.Getenv("CAIRN_PRINCIPAL"))
+		fmt.Fprintf(w, "\n"+
+			"  THE SERVER ANSWERED. Everything below this is working: the endpoint\n"+
+			"  mapper resolved, the interface bound, Kerberos authenticated, and the\n"+
+			"  call was dispatched. What it refused is the READ.\n"+
+			"\n"+
+			"  FIRST, whether the account holds the grant at all:\n"+
+			"\n"+
+			"    Get-ADPrincipalGroupMembership %s | Select-Object Name\n"+
+			"\n"+
+			"  DHCP Users is read-only on the DHCP service and is the whole grant\n"+
+			"  this appliance asks for. If it is absent:\n"+
+			"\n"+
+			"    Add-ADGroupMember -Identity \"DHCP Users\" -Members %s\n"+
+			"\n"+
+			"  Membership travels in the Kerberos ticket and preflight takes a\n"+
+			"  fresh one each run, so nothing on THIS box needs restarting.\n"+
+			"\n"+
+			"  THAT IS NOT THE SAME AS NOTHING NEEDING A RESTART. The DHCP Server\n"+
+			"  service resolves the DHCP Users and DHCP Administrators SIDs on its\n"+
+			"  own schedule, and an account added after it did so is a documented\n"+
+			"  cause of exactly this refusal WITH the membership present. Neither\n"+
+			"  way is asserted here. The test is one command on the DC:\n"+
+			"\n"+
+			"    Restart-Service DHCPServer\n"+
+			"\n"+
+			"  Re-run afterwards. If it answers, that was the cause and it belongs\n"+
+			"  in onboarding, because every future client hits it.\n"+
+			"\n"+
+			"  IF IT IS ALREADY THERE, this is not the answer and the refusal is\n"+
+			"  something else. Seen on RVA's own domain, 20 September 2026, with the\n"+
+			"  membership present. What separates the possibilities is asking the\n"+
+			"  same question from Windows as the same account. Use runas /netonly:\n"+
+			"  it keeps the local session as whoever you are and sends only the\n"+
+			"  NETWORK request as this account, so it needs no logon rights\n"+
+			"  anywhere. Do NOT use Invoke-Command -- that is WinRM, it needs\n"+
+			"  Remote Management Users, and its refusal is about the session\n"+
+			"  rather than about DHCP.\n"+
+			"\n"+
+			"    runas /netonly /user:DOMAIN\\%s \"powershell -NoExit\"\n"+
+			"    Get-DhcpServerv4Scope -ComputerName <the DHCP server>\n"+
+			"\n"+
+			"  Without the RSAT module, netsh asks the same interface:\n"+
+			"\n"+
+			"    netsh dhcp server \\\\<the DHCP server> show scope\n"+
+			"\n"+
+			"  Refused there too, and the grant is genuinely not sufficient on this\n"+
+			"  server, which is a question for whoever administers it. Answered\n"+
+			"  there, and the account can read DHCP while THIS probe cannot, which\n"+
+			"  makes it ours.\n"+
+			"\n"+
+			"  AND ONE MORE, WHICH IS A PRODUCT QUESTION RATHER THAN A LAB ONE.\n"+
+			"  Add the account to DHCP Administrators temporarily and re-run. If\n"+
+			"  that is what R_DhcpEnumSubnets takes on this server, then this\n"+
+			"  appliance CANNOT BE READ-ONLY ON DHCP, and what a district is asked\n"+
+			"  to grant changes. Find out on a domain where being wrong is cheap,\n"+
+			"  and record the answer either way -- DHCP Users is sufficient is\n"+
+			"  worth as much written down as the alternative. Remove the\n"+
+			"  membership afterwards; it is a test, not a configuration.\n",
+			account, account, account)
+	}
+	if denied {
+		return exitFarEndRefused
+	}
+	return 1
 }

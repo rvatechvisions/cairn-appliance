@@ -64,7 +64,10 @@ const releaseFormat = "cairn-release/1"
 const noTrustedKeyYet = "CAIRN-NO-RELEASE-SIGNING-KEY-YET"
 
 // trustedReleaseKeys are the public keys, in authorized_keys form, whose
-// signature this box accepts on a release manifest.
+// signature this box accepts on a release manifest. One entry only: the
+// release signing key, and never a recovery key, because any key here can
+// sign a release. The order author's ruling, WO-1017-N54 item 2; held by
+// TestTheTrustListHoldsOneKeyOnly.
 var trustedReleaseKeys = []string{noTrustedKeyYet}
 
 // releaseManifest is the signed document.

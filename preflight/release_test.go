@@ -164,6 +164,19 @@ func TestRefusesAStaleManifest(t *testing.T) {
 	}
 }
 
+// One key, and only one, ever signs a release. The order author's ruling,
+// WO-1017-N54 item 2, 17 October 2026: the recovery keys sign key changes and
+// never releases, and verifyRelease accepts a manifest signed by any key in
+// this list, so a recovery key placed here could sign a release. They stay off
+// the box until a key-change verifier with roles exists. This test outlives the
+// placeholder: when the signing key replaces it, the list still holds one entry,
+// and a second key cannot join it without this failing.
+func TestTheTrustListHoldsOneKeyOnly(t *testing.T) {
+	if len(trustedReleaseKeys) != 1 {
+		t.Fatalf("trustedReleaseKeys holds %d entries; it holds the release signing key alone, and the recovery keys wait for a key-change verifier with roles", len(trustedReleaseKeys))
+	}
+}
+
 // The binary as built trusts nobody: the placeholder is never a key.
 func TestTheBuiltTrustListAcceptsNoRelease(t *testing.T) {
 	if len(trustedReleaseKeys) != 1 || trustedReleaseKeys[0] != noTrustedKeyYet {

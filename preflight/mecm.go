@@ -245,7 +245,7 @@ func listSystems(client *http.Client, authorize func(*http.Request) error, base 
 			return nil, fmt.Errorf("the administration service answered with a redirect (%d); it is returned, not followed, and nothing was sent", response.StatusCode)
 		}
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("the administration service refused the account (%d); it must be an administrative user in Configuration Manager", response.StatusCode)
+			return nil, farEndRefused(fmt.Errorf("the administration service refused the account (%d); it must be an administrative user in Configuration Manager", response.StatusCode))
 		}
 		if response.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("the administration service answered with %d", response.StatusCode)

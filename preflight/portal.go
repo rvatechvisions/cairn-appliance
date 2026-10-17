@@ -183,7 +183,7 @@ func enrol(portal, registrationKey string, private ed25519.PrivateKey) (string, 
 	if response.StatusCode != http.StatusOK {
 		// The portal does not distinguish unknown, already-redeemed and
 		// revoked, deliberately. Neither does this.
-		return "", fmt.Errorf("enrolment refused (%d): %s", response.StatusCode, strings.TrimSpace(string(body)))
+		return "", portalRefused(fmt.Errorf("enrolment refused (%d): %s", response.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	var answer struct {
@@ -304,9 +304,9 @@ func fetchCredential(portal, fingerprint string, private ed25519.PrivateKey) (di
 		}
 		_ = json.Unmarshal(body, &refusal)
 		if refusal.Error != "" {
-			return empty, fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
+			return empty, portalRefused(fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error))
 		}
-		return empty, fmt.Errorf("refused (%d)", response.StatusCode)
+		return empty, portalRefused(fmt.Errorf("refused (%d)", response.StatusCode))
 	}
 
 	var credential directoryCredential
@@ -382,9 +382,9 @@ func signedPost(portal, path, contentType, fingerprint string, private ed25519.P
 		}
 		_ = json.Unmarshal(body, &refusal)
 		if refusal.Error != "" {
-			return fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
+			return portalRefused(fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error))
 		}
-		return fmt.Errorf("refused (%d)", response.StatusCode)
+		return portalRefused(fmt.Errorf("refused (%d)", response.StatusCode))
 	}
 
 	return nil

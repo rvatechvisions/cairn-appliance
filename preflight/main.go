@@ -134,9 +134,21 @@ var version string
 // cannot support.
 var relayedHeaders = []string{"username", "realm", "controller", "capabilities", "dhcp-servers"}
 
-// speaks is the -speaks answer: the credential-block lines this binary relays.
+// declaredAbilities are what this binary says it does beyond the credential
+// block, on -speaks' second line, so the shell can tell a binary that does a
+// thing from one that cannot. WO-1017-N47 item 2:
+//   - error-source: a refusal exits 4 when Cairn's portal refused and 5 when
+//     the system being read said no (errorsource.go);
+//   - signed-release: -update installs only what a signed release manifest
+//     names (release.go);
+//   - sessions-left-open: -collect-vsphere prints how many sessions it left
+//     open after every read, good or not (vsphere.go).
+var declaredAbilities = []string{"error-source", "signed-release", "sessions-left-open"}
+
+// speaks is the -speaks answer: the credential-block lines this binary relays,
+// then what else it declares.
 func speaks() string {
-	return "credential-block: " + strings.Join(relayedHeaders, " ")
+	return "credential-block: " + strings.Join(relayedHeaders, " ") + "\nabilities: " + strings.Join(declaredAbilities, " ")
 }
 
 // stamp is what -version prints and what a build check reads back.
@@ -477,7 +489,7 @@ func main() {
 			}
 			if err := runUpdate(*portalURL, bound, private, self); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -491,7 +503,7 @@ func main() {
 			defer cancel()
 			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -504,7 +516,7 @@ func main() {
 				if errors.Is(err, errRelayNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -531,7 +543,7 @@ func main() {
 				if errors.Is(err, errAdNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -545,7 +557,7 @@ func main() {
 				if errors.Is(err, errProxmoxNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -559,7 +571,7 @@ func main() {
 				if errors.Is(err, errMecmNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -573,7 +585,7 @@ func main() {
 				if errors.Is(err, errVsphereNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -588,7 +600,7 @@ func main() {
 				if errors.Is(err, errZabbixNotAsked) {
 					os.Exit(3)
 				}
-				os.Exit(1)
+				os.Exit(failureExit(err))
 			}
 			return
 		}
@@ -708,7 +720,19 @@ func main() {
 	if err := run(ctx, *server, *scopes, *transport, *target, *debug); err != nil {
 		// The reason, in full. A probe that reports "failed" teaches nobody
 		// which of the four things it depends on was the one that broke.
-		fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
+		//
+		// REFUSED only for the server's own answer. APPLIANCE-BINARY-QUEUE.md
+		// item 2, WO-1017-N47 item 2: this printed "REFUSED by" for anything
+		// run() returned -- a timeout, an endpoint mapper that could not be
+		// reached, a fault here -- so a person at the box read REFUSED directly
+		// above the shell's COULD NOT TELL. ERROR_ACCESS_DENIED is the one
+		// answer that is the DHCP service deciding, and the exit says so too.
+		denied := strings.Contains(err.Error(), "ERROR_ACCESS_DENIED")
+		if denied {
+			fmt.Fprintf(os.Stderr, "REFUSED by %s: %v\n", *server, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "the read of %s ended without a refusal by the server: %v\n", *server, err)
+		}
 
 		// Name the grant when the server names the grant.
 		//
@@ -719,7 +743,7 @@ func main() {
 		// looked up. It arrives at the end of a long run where every earlier
 		// layer looks fine, which is exactly when a bare code reads as
 		// something being broken.
-		if strings.Contains(err.Error(), "ERROR_ACCESS_DENIED") {
+		if denied {
 			account := accountName(os.Getenv("CAIRN_PRINCIPAL"))
 			fmt.Fprintf(os.Stderr, "\n"+
 				"  THE SERVER ANSWERED. Everything below this is working: the endpoint\n"+
@@ -780,6 +804,9 @@ func main() {
 				"  worth as much written down as the alternative. Remove the\n"+
 				"  membership afterwards; it is a test, not a configuration.\n",
 				account, account, account)
+		}
+		if denied {
+			os.Exit(exitFarEndRefused)
 		}
 		os.Exit(1)
 	}

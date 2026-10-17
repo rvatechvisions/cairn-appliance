@@ -159,7 +159,7 @@ func listGuests(client *http.Client, base string, credential proxmoxCredential) 
 	// other code falls to the named-status failure below rather than being
 	// guessed at.
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("Proxmox VE refused the API token (%d)", response.StatusCode)
+		return nil, farEndRefused(fmt.Errorf("Proxmox VE refused the API token (%d)", response.StatusCode))
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
 		return nil, fmt.Errorf("Proxmox VE answered with a redirect (%d), which is returned rather than followed", response.StatusCode)

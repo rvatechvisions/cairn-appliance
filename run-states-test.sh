@@ -47,15 +47,17 @@ lift() {
   printf '%s\n' "$body"
 }
 say() { printf '%s\n' "$*"; }
-for fn in read_reader json_safe first_reason run_capability submit_run_report; do
+for fn in read_reader binary_declares json_safe first_reason run_capability submit_run_report; do
   eval "$(lift "$fn")"
 done
+# An older binary, which declares no abilities: the words decide, as before.
+BINARY_SPEAKS="credential-block: username realm controller capabilities dhcp-servers"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 CAIRN_PORTAL="https://portal.example"
 
-counters() { FOUND=0 EMPTY=0 REFUSED=0 UNTOLD=0 UNASKED=0 NOTRUN=0 CAP_NOTE="" CAP_SCOPES=""; }
+counters() { FOUND=0 EMPTY=0 REFUSED=0 UNTOLD=0 UNASKED=0 NOTRUN=0 CAP_NOTE="" CAP_SCOPES="" CAP_SESSIONS=""; }
 
 # --- read_reader ----------------------------------------------------------
 reader() {
@@ -105,6 +107,52 @@ reader connrefused
 reader connrefusedmid
 [ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "a connection refused mid-line is could not tell too, by name rather than by punctuation" || bad "a connection refused followed by words was read as a refusal: untold ${UNTOLD}, refused ${REFUSED}: ${OUT}"
 case "$OUT" in *"COULD NOT TELL: nothing accepted a connection at the address for the Zabbix server, which is the network answering"*) ok "and it says the network answered, not the reader" ;; *) bad "printed: ${OUT}" ;; esac
+
+# --- a binary that declares error-source: the exit status decides ---------
+# WO-1017-N47 item 2. The stand-in prints what preflight/errorsource.go and
+# the readers print, and exits as failureExit does.
+BINARY_SPEAKS="credential-block: username realm controller capabilities dhcp-servers
+abilities: error-source signed-release sessions-left-open"
+declaring() {
+  local mode="$1" stub="${work}/declaring"
+  cat >"$stub" <<STUB
+#!/usr/bin/env bash
+case "${mode}" in
+  portal) echo "sessions-left-open: 0" ; echo "preflight: refused (400): The submission is not the shape the contract describes." >&2 ; exit 4 ;;
+  farend) echo "sessions-left-open: 0" ; echo "preflight: vCenter refused the account (401)" >&2 ; exit 5 ;;
+  wordy) echo "preflight: Zabbix answered host.get with code -32602, which it uses both for a request it cannot take and for one it declines, so this run cannot tell which: the account was refused by policy" >&2 ; exit 1 ;;
+  empty) echo "sessions-left-open: 1" ; echo "preflight: vCenter listed no virtual machine this account may see, so nothing was sent" >&2 ; exit 1 ;;
+  failedopen) echo "sessions-left-open: 1" ; echo "preflight: reading vCenter's list: timeout; and signing out failed too, so the session may stay open on vCenter until it times out" >&2 ; exit 1 ;;
+esac
+STUB
+  chmod +x "$stub"
+  counters
+  OUT="$(read_reader "$stub" -collect-vsphere "the vCenter" "virtual machines")"
+  read_reader "$stub" -collect-vsphere "the vCenter" "virtual machines" >/dev/null
+}
+declaring portal
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "exit 4 is Cairn's portal refusing, never the far end" || bad "exit 4: untold ${UNTOLD}, refused ${REFUSED}: ${OUT}"
+case "$OUT" in *"COULD NOT TELL: Cairn's portal refused what this box sent for the vCenter"*) ok "and it says whose refusal it was" ;; *) bad "printed: ${OUT}" ;; esac
+declaring farend
+[ "$REFUSED" -eq 1 ] && [ "$UNTOLD" -eq 0 ] && ok "exit 5 is the far end saying no" || bad "exit 5: refused ${REFUSED}, untold ${UNTOLD}"
+declaring wordy
+[ "$UNTOLD" -eq 1 ] && [ "$REFUSED" -eq 0 ] && ok "exit 1 is neither, whatever its words say about a refusal" || bad "exit 1 with refusing words was read as a refusal: refused ${REFUSED}, untold ${UNTOLD}: ${OUT}"
+case "$OUT" in *"the binary says this was neither Cairn's portal refusing nor the vCenter saying no"*) ok "and it says the binary placed it as neither" ;; *) bad "printed: ${OUT}" ;; esac
+declaring empty
+[ "$EMPTY" -eq 1 ] && [ "$UNTOLD" -eq 0 ] && ok "an empty list is still empty under a declaring binary" || bad "empty ${EMPTY}, untold ${UNTOLD}: ${OUT}"
+[ "$CAP_SESSIONS" = "1" ] && ok "and the session it left open is counted, on a read that listed nothing" || bad "sessions left open read as '${CAP_SESSIONS}' after an empty read"
+declaring failedopen
+[ "$CAP_SESSIONS" = "1" ] && ok "a read that failed with the session open still counts it" || bad "sessions left open read as '${CAP_SESSIONS}' after a failed read"
+declaring farend
+[ "$CAP_SESSIONS" = "0" ] && ok "a read that closed its session counts nought, which is said rather than left out" || bad "sessions left open read as '${CAP_SESSIONS}' after a closed session"
+counters
+CAP_JSON=""
+CONSENT_KNOWN=1 CONSENTED="all"
+step_permitted() { return 0; }
+step_session() { CAP_SESSIONS=1; UNTOLD=$((UNTOLD + 1)); say "COULD NOT TELL: the read failed."; return 1; }
+run_capability vsphere step_session >/dev/null || true
+case "$CAP_JSON" in *'"name":"vsphere","state":"could-not-tell"'*'"sessionsLeftOpen":1}'*) ok "the run report carries the count on the capability, on a failed read" ;; *) bad "json: ${CAP_JSON}" ;; esac
+BINARY_SPEAKS="credential-block: username realm controller capabilities dhcp-servers"
 
 # --- run_capability: six counters, six states -----------------------------
 CONSENT_KNOWN=1 CONSENTED="all"

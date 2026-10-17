@@ -133,7 +133,7 @@ func openSession(client *http.Client, base string, credential vsphereCredential)
 		return "", fmt.Errorf("reading vCenter's sign-in answer: %w", err)
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return "", fmt.Errorf("vCenter refused the account (%d)", response.StatusCode)
+		return "", farEndRefused(fmt.Errorf("vCenter refused the account (%d)", response.StatusCode))
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("vCenter answered the sign-in with %d", response.StatusCode)
@@ -327,6 +327,13 @@ func collectVsphere(client *http.Client, portal, fingerprint string, private ed2
 	collectedAt := time.Now()
 	items, leftOpen, err := readVsphere(client, *credential.Vsphere)
 	credential.Vsphere = nil
+	// Every path after a sign-in says how many sessions this run left open, on
+	// a line of its own that preflight.sh carries on the run report.
+	// APPLIANCE-BINARY-QUEUE.md item 4, WO-1017-N47 item 2: until this the count
+	// travelled only inside a submission, and a read that failed or listed
+	// nothing sent none, so the case most likely to leave a session open was
+	// the one the portal could not judge.
+	fmt.Println(sessionsLeftOpenLine(leftOpen))
 	if err != nil {
 		return err
 	}
@@ -351,4 +358,12 @@ func collectVsphere(client *http.Client, portal, fingerprint string, private ed2
 	}
 	fmt.Println("submitted")
 	return nil
+}
+
+// sessionsLeftOpenLine is the line collectVsphere prints after every read.
+func sessionsLeftOpenLine(leftOpen bool) string {
+	if leftOpen {
+		return "sessions-left-open: 1"
+	}
+	return "sessions-left-open: 0"
 }

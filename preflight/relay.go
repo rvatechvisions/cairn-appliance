@@ -258,7 +258,7 @@ func collectRelay(portal, fingerprint string, private ed25519.PrivateKey, budget
 			continue
 		}
 		if status != http.StatusOK {
-			return fmt.Errorf("the portal refused the request for work (%d)", status)
+			return portalRefused(fmt.Errorf("the portal refused the request for work (%d)", status))
 		}
 		idle = 0
 		var envelope struct {
@@ -280,7 +280,7 @@ func collectRelay(portal, fingerprint string, private ed25519.PrivateKey, budget
 		if status, _, err := signedExchange(portal, relayResultPath, relayResultContentType, fingerprint, private, payload); err != nil {
 			return err
 		} else if status != http.StatusNoContent {
-			return fmt.Errorf("the portal refused the answer (%d)", status)
+			return portalRefused(fmt.Errorf("the portal refused the answer (%d)", status))
 		}
 	}
 	fmt.Printf("relayed: %d requests made, %d refused by this appliance\n", made, refused)

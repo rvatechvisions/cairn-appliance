@@ -104,9 +104,9 @@ func signedFetch(portal, path, fingerprint string, private ed25519.PrivateKey) (
 		}
 		_ = json.Unmarshal(body, &refusal)
 		if refusal.Error != "" {
-			return nil, fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error)
+			return nil, portalRefused(fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error))
 		}
-		return nil, fmt.Errorf("refused (%d)", response.StatusCode)
+		return nil, portalRefused(fmt.Errorf("refused (%d)", response.StatusCode))
 	}
 	return body, nil
 }

@@ -257,6 +257,18 @@ binary_hears_consent() {
   return 1
 }
 
+# Whether the binary declares an ability on -speaks' "abilities:" line.
+# WO-1017-N47 item 2. A binary older than that line declares nothing, and its
+# silence is never read as a yes.
+binary_declares() {
+  local ability="$1" abilities
+  abilities="$(printf '%s\n' "$BINARY_SPEAKS" | sed -n 's/^abilities: //p')"
+  case " ${abilities} " in
+    *" ${ability} "*) return 0 ;;
+  esac
+  return 1
+}
+
 # What this run knows about its consent list, settled once and said once.
 #
 # Three answers, and only one of them is about the portal:
@@ -993,6 +1005,11 @@ run_capability() {
   # The scope counts a DHCP read printed, as a JSON object, or empty. Counts
   # only, R20. WO-1004-M item 3.
   CAP_SCOPES=""
+  # How many sessions the reader left open on the far end, as the binary said,
+  # or empty where it said nothing. WO-1017-N47 item 2: carried on the run
+  # report, which is sent every run, so a read that failed or listed nothing
+  # still says it.
+  CAP_SESSIONS=""
 
   log="$(mktemp)"
 
@@ -1051,6 +1068,9 @@ run_capability() {
   local entry scopes_json=""
   if [ -n "$CAP_SCOPES" ]; then
     scopes_json=",\"scopes\":${CAP_SCOPES}"
+  fi
+  if [ -n "$CAP_SESSIONS" ]; then
+    scopes_json="${scopes_json},\"sessionsLeftOpen\":${CAP_SESSIONS}"
   fi
   if [ -n "$reason" ]; then
     entry="{\"name\":\"${name}\",\"state\":\"${state}\",\"reason\":\"$(json_safe "$reason")\"${scopes_json}}"
@@ -2425,7 +2445,14 @@ capability_dhcp() {
          && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] \
          && [ "$devices" = "devices: 0, from leases whose hardware address could be read; 0 refused as unreadable" ]; then
       DHCP_READ="empty"
+    # WO-1017-N47 item 2: a binary that declares error-source says by exit 4
+    # that Cairn's portal refused the submission, so that is read first.
+    elif binary_declares error-source && [ "$status" -eq 4 ]; then
+      DHCP_READ="not-sent"
+      DHCP_NOT_SENT_SAID="$(grep -m1 '^preflight: ' "$output")"
+      DHCP_NOT_SENT_SAID="${DHCP_NOT_SENT_SAID#preflight: }"
     # RETIRES-WITH error-source: the DHCP read's not-sent arm
+    # KEPT-FOR: a binary that predates error-source, and the portal being unreachable or answering unreadably, which is exit 1 either way
     elif grep -qE "^preflight: (refused \(|reaching the portal: |the portal's answer did not parse)" "$output"; then
       DHCP_READ="not-sent"
       DHCP_NOT_SENT_SAID="$(grep -m1 -E "^preflight: (refused \(|reaching the portal: |the portal's answer did not parse)" "$output")"
@@ -2604,6 +2631,8 @@ read_reader() {
   cat "$output"
   said="$(grep '^preflight: ' "$output" | tail -n 1)"
   said="${said#preflight: }"
+  # The binary's count of sessions it left open, digits only, or nothing.
+  CAP_SESSIONS="$(sed -n 's/^sessions-left-open: \([0-9][0-9]*\)$/\1/p' "$output" | tail -n 1)"
   rm -f "$output"
   if [ "$status" -eq 0 ]; then
     FOUND=$((FOUND + 1))
@@ -2613,6 +2642,32 @@ read_reader() {
     say "NOT ASKED: the binary asked ${who} nothing; ${said:-it gave no reason}"
     UNASKED=$((UNASKED + 1))
     return 1
+  fi
+  # WO-1017-N47 item 2: a binary that declares error-source says whose an error
+  # is by its exit status, so the words below are not asked. 4 is Cairn's portal
+  # refusing what this box sent; 5 is the far end answering no; anything else
+  # is neither, said as that.
+  if binary_declares error-source; then
+    case "$status" in
+      4)
+        say "COULD NOT TELL: Cairn's portal refused what this box sent for ${who}, so this is not a refusal by ${who}: ${said}"
+        UNTOLD=$((UNTOLD + 1))
+        return 1
+        ;;
+      5)
+        say "REFUSED: ${said}"
+        REFUSED=$((REFUSED + 1))
+        return 1
+        ;;
+    esac
+    case "$said" in
+      *"listed no "*", so nothing was sent") ;;
+      *)
+        say "COULD NOT TELL: ${who} did not answer with ${what}, and the binary says this was neither Cairn's portal refusing nor ${who} saying no: ${said:-the binary gave no reason}"
+        UNTOLD=$((UNTOLD + 1))
+        return 1
+        ;;
+    esac
   fi
   case "$said" in
     *"listed no "*", so nothing was sent")
@@ -2635,6 +2690,7 @@ read_reader() {
     # repository's APPLIANCE-BINARY-QUEUE.md -- these patterns are all that
     # stands between Cairn's own refusal and a client's system being named for it.
     # RETIRES-WITH error-source: read_reader's portal arm
+    # KEPT-FOR: a binary that predates error-source, which says whose an error is only in its words
     "refused ("*|*": refused ("*|*"the portal refused "*)
       say "COULD NOT TELL: Cairn's portal refused what this box sent for ${who}, so this is not a refusal by ${who}: ${said}"
       UNTOLD=$((UNTOLD + 1))
@@ -2645,6 +2701,7 @@ read_reader() {
     # because Go ends the line with the word and the arm below needs a space
     # after it; named here, so the verdict stops depending on punctuation.
     # RETIRES-WITH error-source: read_reader's connection refused arm
+    # KEPT-FOR: a binary that predates error-source, which says whose an error is only in its words
     *"connection refused"*)
       say "COULD NOT TELL: nothing accepted a connection at the address for ${who}, which is the network answering and not ${who}, so this run cannot tell a refusal from no answer: ${said}"
       UNTOLD=$((UNTOLD + 1))

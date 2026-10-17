@@ -50,17 +50,43 @@ else
   bad "the marked arms are not the named set: found [${markers}]"
 fi
 
-# What the binary says it understands. The -speaks answer is built in speaks();
-# if that function cannot be found, this check could not run.
+# What the binary says it understands. The -speaks answer is built in speaks(),
+# and since WO-1017-N47 its second line from declaredAbilities, so both are
+# read; if the function cannot be found, this check could not run.
 speaks="$(sed -n '/^func speaks() string {$/,/^}$/p' "$MAIN")"
 if [ -z "$speaks" ]; then
   printf 'FAIL: preflight/main.go defines no speaks(), so what the binary declares cannot be read\n'
   exit 2
 fi
+if printf '%s\n' "$speaks" | grep -q 'declaredAbilities'; then
+  abilities="$(grep -E '^var declaredAbilities = ' "$MAIN")"
+  if [ -z "$abilities" ]; then
+    printf 'FAIL: speaks() names declaredAbilities and preflight/main.go does not define it on one line, so what the binary declares cannot be read\n'
+    exit 2
+  fi
+  speaks="${speaks}
+${abilities}"
+fi
 ok "the binary's -speaks answer was found and read"
 
+# WO-1017-N47 item 2: the binary declares error-source, so each arm still in
+# place must say, on the line after its marker, what it is kept for -- a box
+# whose binary predates the field. An arm kept without that line is the patch
+# that outlives its reason.
 if printf '%s\n' "$speaks" | grep -q 'error-source'; then
-  bad "the binary declares error-source and these arms are still in place: $(printf '%s' "$markers" | tr '\n' ';'). Remove each, or keep it for an older binary and say so in the arm"
+  unexplained="$(awk '/^[[:space:]]*# RETIRES-WITH error-source: /{name=$0; sub(/^[[:space:]]*# RETIRES-WITH error-source: /,"",name); getline next_line; if (next_line !~ /^[[:space:]]*# KEPT-FOR: ./) print name}' "$SCRIPT")"
+  if [ -z "$unexplained" ]; then
+    ok "the binary declares error-source, and every arm still in place says what it is kept for"
+  else
+    bad "the binary declares error-source and these arms do not say what they are kept for: $(printf '%s' "$unexplained" | tr '\n' ';'). Remove each, or keep it for an older binary and say so in a KEPT-FOR line after its marker"
+  fi
+  # The shell reads the exit status for a binary that declares it, before any
+  # of the arms: without that, keeping the arms would be all there is.
+  if grep -q 'binary_declares error-source' "$SCRIPT"; then
+    ok "the shell reads the binary's exit status when it declares error-source"
+  else
+    bad "the binary declares error-source and preflight.sh never asks whether it does"
+  fi
 else
   ok "the binary does not yet declare error-source, so the arms still stand"
 fi

@@ -145,16 +145,13 @@ func readZabbixHosts(client *http.Client, credential zabbixCredential) ([]Zabbix
 
 	var answer struct {
 		Result json.RawMessage `json:"result"`
-		Error  *struct {
-			Message string `json:"message"`
-			Data    string `json:"data"`
-		} `json:"error"`
+		Error  *zabbixError    `json:"error"`
 	}
 	if err := json.Unmarshal(body, &answer); err != nil {
 		return nil, fmt.Errorf("the Zabbix answer did not parse: %w", err)
 	}
 	if answer.Error != nil {
-		return nil, fmt.Errorf("Zabbix refused host.get: %s %s", answer.Error.Message, answer.Error.Data)
+		return nil, answer.Error.asError()
 	}
 	if answer.Result == nil {
 		return nil, fmt.Errorf("the Zabbix answer carried neither a result nor an error")
@@ -283,4 +280,39 @@ func collectZabbix(client *http.Client, portal, fingerprint string, private ed25
 	}
 	fmt.Println("submitted")
 	return nil
+}
+
+// zabbixError is a JSON-RPC error object as Zabbix sends it: a code, a short
+// message and a longer data field. APPLIANCE-BINARY-QUEUE.md item 3,
+// WO-1017-N47 item 2: every error object used to read "Zabbix refused
+// host.get", including "Invalid params.", our request being wrong.
+type zabbixError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    string `json:"data"`
+}
+
+// asError says whose the error is, by the code, as far as the code can say.
+//
+// The codes are JSON-RPC 2.0's, section 5.1 of its specification (last updated
+// 4 January 2013, read 17 October 2026): -32700 parse error, -32600 invalid
+// request and -32601 method not found say Cairn's request was not one Zabbix
+// could take, which is ours; -32603 internal error is Zabbix failing, which is
+// theirs and not a no. Zabbix's own API page (7.4, read 17 October 2026) shows
+// -32602 "Invalid params." for a request missing a parameter, and this file's
+// tests carry -32602 with "Not authorized." for a bad token, so -32602 alone
+// cannot tell our request being wrong from Zabbix declining it, and it is said
+// as that. Any other code is Zabbix answering the request with a no.
+func (e *zabbixError) asError() error {
+	words := strings.TrimSpace(e.Message + " " + e.Data)
+	switch e.Code {
+	case -32700, -32600, -32601:
+		return fmt.Errorf("Zabbix could not take Cairn's host.get request, which is ours to fix (code %d): %s", e.Code, words)
+	case -32603:
+		return fmt.Errorf("Zabbix failed answering host.get, an internal error on its side and not a no (code %d): %s", e.Code, words)
+	case -32602:
+		return fmt.Errorf("Zabbix answered host.get with code -32602, which it uses both for a request it cannot take and for one it declines, so this run cannot tell which: %s", words)
+	default:
+		return farEndRefused(fmt.Errorf("Zabbix refused host.get (code %d): %s", e.Code, words))
+	}
 }

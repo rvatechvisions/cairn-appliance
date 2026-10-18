@@ -1,0 +1,9 @@
+The four captures this commit cites are gone. At about 16:07 UTC on 18 October 2026, after this commit was pushed, the build machine's temp folder was emptied, and the capture folder went with it, before the evidence manifest had kept a copy of any of the four. What emptied it was not established. So they are recorded in the portal's evidence/captures.json as gone, and nothing has been written in their place.
+
+The same checks were run again, after the clean, against this commit's own tree, 4ff02facad1b48b76d0c1041820d8a506cff5573, with the checkout clean at this commit. They are new reads, not copies of the lost ones:
+- go vet and go test, passing: 2026-10-18T16-10-59-bash-21176.out sha256 14ecebc8848790dfea3a9cbfb9ab6a6a85605d7e1529236afba016f650677e72
+- run-tests.sh, 27 of 27: 2026-10-18T16-11-14-bash-12716.out sha256 3907bbce5e510609b3f6d28329f23e33d1be880b47a94a726efd1c72db1df0c1
+- the six Go plants, each failing by name, digest identical after the restore: 2026-10-18T16-13-22-npx-22908.out sha256 421738d812838027cc6c78bc194e7c0f57dfbf89ae6132dc8d84cf5d497b817b
+- the two plants on the entry, each failing by name, digest identical after the restore: 2026-10-18T16-13-35-node-22956.out sha256 fb44be3607de52e70352336f55a965304983068388005fc6591e20306db72eea
+
+Each ran from C:\dev\portal, so its header names the portal's tree; what it tested is this repository at this commit.

@@ -62,6 +62,14 @@ const releaseNamespace = "cairn-release@rvatechvisions.com"
 // rather than reading half of it.
 const releaseFormat = "cairn-release/1"
 
+// releaseFormatScripts is slice 6's format: everything cairn-release/1 carries,
+// and the scripts beside the binary (release_scripts.go). WO-1018-N60 item 1a.
+// The format name is the field that marks the change, so release 1, signed as
+// cairn-release/1, is read exactly as it was: its bytes carry no scripts
+// field, and a cairn-release/1 manifest that names scripts is refused rather
+// than half-read.
+const releaseFormatScripts = "cairn-release/2"
+
 // trustedReleaseKeys are the public keys, in authorized_keys form, whose
 // signature this box accepts on a release manifest. One entry only: the
 // release signing key, and never a recovery key, because any key here can
@@ -83,6 +91,9 @@ type releaseManifest struct {
 		Size   int64  `json:"size"`
 		Commit string `json:"commit"`
 	} `json:"binary"`
+	// Scripts is carried by cairn-release/2 only. Absent from cairn-release/1,
+	// release 1 among them.
+	Scripts *releaseScripts `json:"scripts,omitempty"`
 }
 
 // signedRelease is what the portal serves: the manifest's exact bytes, base64,
@@ -237,8 +248,17 @@ func verifyRelease(served *signedRelease, trusted []string, now time.Time, highe
 	if err := json.Unmarshal(message, &manifest); err != nil {
 		return manifest, fmt.Errorf("REFUSED: the signed manifest does not parse: %v. Nothing was installed", err)
 	}
-	if manifest.Format != releaseFormat {
-		return manifest, fmt.Errorf("REFUSED: the signed manifest is format %q, and this binary reads %q. Nothing was installed", manifest.Format, releaseFormat)
+	switch manifest.Format {
+	case releaseFormat:
+		if manifest.Scripts != nil {
+			return manifest, fmt.Errorf("REFUSED: the signed manifest is format %q and names scripts, which only %q carries. Nothing was installed", releaseFormat, releaseFormatScripts)
+		}
+	case releaseFormatScripts:
+		if err := validScripts(manifest.Scripts); err != nil {
+			return manifest, fmt.Errorf("REFUSED: the signed manifest's scripts %v. Nothing was installed", err)
+		}
+	default:
+		return manifest, fmt.Errorf("REFUSED: the signed manifest is format %q, and this binary reads %q and %q. Nothing was installed", manifest.Format, releaseFormat, releaseFormatScripts)
 	}
 	expires, err := time.Parse(time.RFC3339, manifest.ExpiresAt)
 	if err != nil {

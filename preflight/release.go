@@ -23,14 +23,17 @@ package main
 //     downgrade. Our own rollback is a new, higher sequence carrying older
 //     content, so nothing legitimate is lower.
 //
-// ## The trusted keys do not exist yet
+// ## The trusted key
 //
-// Jackie's signing key and the two recovery keys are made on his own machines
-// (the key ACTION card, REPORT-WO-1017-N46 item 5a). Until their public keys are
-// written into trustedReleaseKeys, the list holds noTrustedKeyYet, every
-// manifest is refused as signed by a key this box does not trust, and the
-// portal's publish refuses a binary that carries the placeholder, so a binary
-// that can trust nobody cannot reach a box by accident.
+// ~~The trusted keys do not exist yet.~~ *Corrected where it stands by
+// WO-1018-N57 item 3a:* Jackie made the release signing key on his
+// workstation and pasted its public line to the ACTION card (Asana
+// 1219602126301657, 23:48:35 UTC on 17 October 2026), with its fingerprint,
+// SHA256:OvIasXXdm5uM/TWOH2c+2loKCd+/IpU+SejcutHmuiA. That line is the one
+// entry in trustedReleaseKeys. The placeholder is gone: the portal's publish
+// refuses a binary that carries it, so it cannot stay anywhere in the binary.
+// The two recovery keys stay off the box until both tokens exist and the
+// key-change verifier with roles is wired (keychange.go).
 
 import (
 	"bytes"
@@ -59,16 +62,15 @@ const releaseNamespace = "cairn-release@rvatechvisions.com"
 // rather than reading half of it.
 const releaseFormat = "cairn-release/1"
 
-// noTrustedKeyYet stands where the trusted public keys go until they exist.
-// The portal's publish refuses a binary containing this string.
-const noTrustedKeyYet = "CAIRN-NO-RELEASE-SIGNING-KEY-YET"
-
 // trustedReleaseKeys are the public keys, in authorized_keys form, whose
 // signature this box accepts on a release manifest. One entry only: the
 // release signing key, and never a recovery key, because any key here can
 // sign a release. The order author's ruling, WO-1017-N54 item 2; held by
-// TestTheTrustListHoldsOneKeyOnly.
-var trustedReleaseKeys = []string{noTrustedKeyYet}
+// TestTheTrustListHoldsOneKeyOnly and, by fingerprint,
+// TestTheBuiltTrustListIsJackiesSigningKey.
+var trustedReleaseKeys = []string{
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGcySIkpXxJEP67cr7/G8bpyeCWimHPWX2a0GBk9IU41 Cairn release signing",
+}
 
 // releaseManifest is the signed document.
 type releaseManifest struct {
@@ -188,14 +190,11 @@ func verifySSHSig(armored string, namespace string, message []byte) (ssh.PublicK
 	return key, nil
 }
 
-// trustedKeys parses the trusted list. A placeholder or an unparseable line is
-// never a key, and an empty result is said as that.
+// trustedKeys parses the trusted list. An unparseable line is never a key,
+// and an empty result is said as that.
 func trustedKeys(lines []string) ([]ssh.PublicKey, error) {
 	var keys []ssh.PublicKey
 	for _, line := range lines {
-		if line == noTrustedKeyYet {
-			continue
-		}
 		key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
 		if err != nil {
 			return nil, fmt.Errorf("a trusted release key does not parse: %w", err)

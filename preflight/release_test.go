@@ -177,16 +177,35 @@ func TestTheTrustListHoldsOneKeyOnly(t *testing.T) {
 	}
 }
 
-// The binary as built trusts nobody: the placeholder is never a key.
-func TestTheBuiltTrustListAcceptsNoRelease(t *testing.T) {
-	if len(trustedReleaseKeys) != 1 || trustedReleaseKeys[0] != noTrustedKeyYet {
-		t.Fatalf("trustedReleaseKeys = %q; until Jackie's keys exist it holds the placeholder alone", trustedReleaseKeys)
+// The binary as built trusts Jackie's release signing key, by the fingerprint
+// he printed on the ACTION card (Asana 1219602126301657), and nothing else.
+// WO-1018-N57 item 3a.
+func TestTheBuiltTrustListIsJackiesSigningKey(t *testing.T) {
+	keys, err := trustedKeys(trustedReleaseKeys)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("trustedReleaseKeys parsed to %d keys, %v; it holds the signing key alone", len(keys), err)
+	}
+	if got := ssh.FingerprintSHA256(keys[0]); got != "SHA256:OvIasXXdm5uM/TWOH2c+2loKCd+/IpU+SejcutHmuiA" {
+		t.Fatalf("the trusted key is %s, not the fingerprint Jackie printed", got)
+	}
+	if keys[0].Type() != "ssh-ed25519" {
+		t.Fatalf("the trusted key is %s; the signing key is an ed25519 key file, never a hardware recovery key", keys[0].Type())
 	}
 	private, _ := fixtureKey(t)
 	message := fixtureManifest(t, 1, releaseNow.Add(time.Hour), []byte("binary"))
-	_, err := verifyRelease(served(message, fixtureSign(t, private, releaseNamespace, message)), trustedReleaseKeys, releaseNow, 0)
+	_, err = verifyRelease(served(message, fixtureSign(t, private, releaseNamespace, message)), trustedReleaseKeys, releaseNow, 0)
+	if err == nil || !strings.Contains(err.Error(), "a key this box does not trust") {
+		t.Fatalf("a test key's manifest against the built trust list gave %v, want it refused as untrusted", err)
+	}
+}
+
+// An empty trust list is said as that, never read as trusting anyone.
+func TestAnEmptyTrustListAcceptsNoRelease(t *testing.T) {
+	private, _ := fixtureKey(t)
+	message := fixtureManifest(t, 1, releaseNow.Add(time.Hour), []byte("binary"))
+	_, err := verifyRelease(served(message, fixtureSign(t, private, releaseNamespace, message)), nil, releaseNow, 0)
 	if err == nil || !strings.Contains(err.Error(), "trusts no release signing key yet") {
-		t.Fatalf("the built trust list gave %v, want the refusal naming that it trusts no key", err)
+		t.Fatalf("an empty trust list gave %v, want the refusal naming that it trusts no key", err)
 	}
 }
 

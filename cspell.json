@@ -101,6 +101,7 @@
     "SSHSIG",
     "spki",
     "DHCPM",
+    "GPSB",
     "SNMP",
     "IMEI",
     "macaddress",

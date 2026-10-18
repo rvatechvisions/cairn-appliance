@@ -26,6 +26,44 @@ const releaseOne = `{"format":"cairn-release/1","sequence":1,"signedAt":"2026-10
 
 const releaseOneDigest = "65fcf21376887a704e0739e9a0389f9cedc4cfe8848108b99c5287476a36fe9e"
 
+// portalReleaseTwo is testdata/release-2-from-portal.json, written by the
+// portal's own src/cli/write-release-manifest.ts (WO-1018-N61 item 4a). Its
+// digest is pinned here and in the portal's release-manifest-format2.test.ts,
+// so the two repositories hold one set of bytes between them.
+const portalReleaseTwoDigest = "384d14f6a67dd018625c8daa5f4668daa18e3952ce9c99f6e87a6c6b66c3766c"
+
+func TestReadsAScriptsManifestThePortalWrote(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "release-2-from-portal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != portalReleaseTwoDigest {
+		t.Fatalf("the fixture is not the bytes the portal wrote: sha256 %x", sum)
+	}
+	private, public := fixtureKey(t)
+	manifest, err := verifyRelease(served(raw, fixtureSign(t, private, releaseNamespace, raw)), []string{public}, releaseNow, 1)
+	if err != nil {
+		t.Fatalf("the box refused a manifest the portal wrote: %v", err)
+	}
+	if manifest.Format != releaseFormatScripts || manifest.Sequence != 2 || manifest.Scripts == nil {
+		t.Fatalf("the portal's manifest read as %+v", manifest)
+	}
+	if manifest.Scripts.Commit != "170a0fe000000000000000000000000000000000" || len(manifest.Scripts.Files) != 2 {
+		t.Fatalf("the scripts entry read as %+v", manifest.Scripts)
+	}
+	consent, preflight := manifest.Scripts.Files[0], manifest.Scripts.Files[1]
+	if consent.Path != "lib/consent.sh" || consent.Size != 8 || consent.Digest != digestOf([]byte("consent\n")) {
+		t.Fatalf("lib/consent.sh read as %+v", consent)
+	}
+	if preflight.Path != "preflight.sh" || preflight.Size != 33 || preflight.Digest != digestOf([]byte("#!/usr/bin/env bash\necho fixture\n")) {
+		t.Fatalf("preflight.sh read as %+v", preflight)
+	}
+	if manifest.Binary.Digest != "e325f1ccaa532aa07de287fa36e83550d8933405b68edde4b7e360e065373d59" || manifest.Binary.Size != 19801334 {
+		t.Fatalf("the binary entry read as %+v", manifest.Binary)
+	}
+}
+
 type fakeSource struct {
 	held         string
 	served       *signedRelease

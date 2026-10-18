@@ -166,6 +166,13 @@ done
 # pull from GitHub and are verified against nothing. This check is about the
 # first half and does not reach the second.
 #
+# Amended where it stands by WO-1018-N61 item 2, on Jackie's decision of
+# 18 October 2026: on RVA's own appliance only, the Atera agent is a third way
+# code reaches a box, from Atera's cloud, with no person there and verified
+# against nothing of ours. This check walks this repository's tracked files, so
+# it cannot see an agent installed on a box, and it does not claim to. Client
+# appliances carry no agent.
+#
 # **The fourth refusal, and it is not implied by the other three.** Jackie’s
 # ruling, 24 September 2026, after a directory listing showed three Go
 # toolchains on RVA's own appliance -- go1.26.8 and go1.26.0 fetched on 20 September,

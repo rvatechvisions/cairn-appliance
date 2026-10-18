@@ -47,9 +47,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -72,41 +70,15 @@ type binaryManifest struct {
 
 // signedFetch makes a signed request with no body and returns what came back.
 func signedFetch(portal, path, fingerprint string, private ed25519.PrivateKey) ([]byte, error) {
-	nonceBytes := make([]byte, 16)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return nil, fmt.Errorf("generating a nonce: %w", err)
-	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
-	signature := ed25519.Sign(private, canonicalBytes(http.MethodPost, path, fingerprint, timestamp, nonce, bodyHash(nil)))
-
-	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(portal, "/")+path, nil)
+	status, body, err := signedRequest(portal, path, fingerprint, private)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Cairn-Appliance", fingerprint)
-	request.Header.Set("Cairn-Timestamp", timestamp)
-	request.Header.Set("Cairn-Nonce", nonce)
-	request.Header.Set("Cairn-Signature", base64.StdEncoding.EncodeToString(signature))
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("reaching the portal: %w", err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading the portal's answer: %w", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		var refusal struct {
-			Error string `json:"error"`
+	if status != http.StatusOK {
+		if words := refusalWords(body); words != "" {
+			return nil, portalRefused(fmt.Errorf("refused (%d): %s", status, words))
 		}
-		_ = json.Unmarshal(body, &refusal)
-		if refusal.Error != "" {
-			return nil, portalRefused(fmt.Errorf("refused (%d): %s", response.StatusCode, refusal.Error))
-		}
-		return nil, portalRefused(fmt.Errorf("refused (%d)", response.StatusCode))
+		return nil, portalRefused(fmt.Errorf("refused (%d)", status))
 	}
 	return body, nil
 }

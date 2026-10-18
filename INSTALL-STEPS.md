@@ -89,6 +89,11 @@ anything.** Each run report says which script commit ran and whether a file
 here was edited, so the portal can say which one it was. That is a record, not
 a check.
 
+On RVA's own appliance only, there is a third way, by Jackie's decision of
+18 October 2026: the Atera agent, which can run code on the box from Atera's
+cloud with nobody here, verified against nothing of Cairn's. No client's
+appliance has it, and these steps never install it.
+
 **On your own machine, signed in to the portal as staff:**
 
 1. Open the client's collector card on **Integrations**. Under *Appliance

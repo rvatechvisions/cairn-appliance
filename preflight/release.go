@@ -94,6 +94,10 @@ type releaseManifest struct {
 	// Scripts is carried by cairn-release/2 only. Absent from cairn-release/1,
 	// release 1 among them.
 	Scripts *releaseScripts `json:"scripts,omitempty"`
+	// OldestBinary is the lowest binaryReleaseLevel a release runs on
+	// (release_apply.go). Absent reads as zero, which every binary meets, so
+	// release 1 reads exactly as it did. WO-1018-N62 item 1.
+	OldestBinary int64 `json:"oldestBinary,omitempty"`
 }
 
 // signedRelease is what the portal serves: the manifest's exact bytes, base64,
@@ -270,7 +274,21 @@ func verifyRelease(served *signedRelease, trusted []string, now time.Time, highe
 	if manifest.Sequence < highestApplied {
 		return manifest, fmt.Errorf("REFUSED: stale: the signed manifest is sequence %d, and this box has applied %d. Nothing was installed", manifest.Sequence, highestApplied)
 	}
+	if manifest.OldestBinary < 0 {
+		return manifest, fmt.Errorf("REFUSED: the signed manifest names an oldest binary of %d, which is not a level. Nothing was installed", manifest.OldestBinary)
+	}
 	return manifest, nil
+}
+
+// binaryTooOld refuses a release's scripts where they need a newer binary than
+// this one. Only the scripts: the binary path (-update) installs the release's
+// own binary, which is how a box gets the newer binary a release asks for, so a
+// check there would stop the one update that answers it.
+func binaryTooOld(manifest releaseManifest, outcome string) error {
+	if manifest.OldestBinary > binaryReleaseLevel {
+		return fmt.Errorf("REFUSED: binary too old: signed release %d's scripts run on a binary of level %d or newer, and this binary is level %d. Update the binary first. Nothing was %s", manifest.Sequence, manifest.OldestBinary, binaryReleaseLevel, outcome)
+	}
+	return nil
 }
 
 // sequencePath is where the box keeps the highest sequence it has applied,

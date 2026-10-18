@@ -187,7 +187,7 @@ func TestStagesAppliesAndConfirmsAScriptsRelease(t *testing.T) {
 	if err != nil || string(content) != "consent\n" {
 		t.Fatalf("the staged file reads %q, %v", content, err)
 	}
-	applied, err := applyStaged(store, []string{public}, releaseNow.Add(24*time.Hour))
+	applied, err := applyStaged(store, []string{public}, releaseNow.Add(24*time.Hour), offering(source.served))
 	if err != nil || applied.Outcome != applyOnTrial {
 		t.Fatalf("apply gave %+v, %v", applied, err)
 	}
@@ -276,7 +276,7 @@ func TestRollsBackWhenTheRunFailsOnNewScripts(t *testing.T) {
 	if _, err := stageRelease(store, first, []string{public}, releaseNow); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyStaged(store, []string{public}, releaseNow); err != nil {
+	if _, err := applyStaged(store, []string{public}, releaseNow, offering(first.served)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := settleRun(store, false, "", releaseNow); err != nil {
@@ -287,7 +287,7 @@ func TestRollsBackWhenTheRunFailsOnNewScripts(t *testing.T) {
 	if _, err := stageRelease(store, second, trusted, releaseNow); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := applyStaged(store, trusted, releaseNow); err != nil || result.Outcome != applyOnTrial {
+	if result, err := applyStaged(store, trusted, releaseNow, offering(second.served)); err != nil || result.Outcome != applyOnTrial {
 		t.Fatalf("apply of 3 gave %+v, %v", result, err)
 	}
 	result, err := settleRun(store, true, "preflight.sh exited before its first capability", releaseNow)
@@ -315,10 +315,10 @@ func TestAnUnsettledTrialIsMovedBackAtTheNextApply(t *testing.T) {
 	if _, err := stageRelease(store, source, []string{public}, releaseNow); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyStaged(store, []string{public}, releaseNow); err != nil {
+	if _, err := applyStaged(store, []string{public}, releaseNow, offering(source.served)); err != nil {
 		t.Fatal(err)
 	}
-	result, err := applyStaged(store, []string{public}, releaseNow.Add(24*time.Hour))
+	result, err := applyStaged(store, []string{public}, releaseNow.Add(24*time.Hour), offering(source.served))
 	if err != nil || result.Outcome != applyNothing {
 		t.Fatalf("the next apply gave %+v, %v", result, err)
 	}
@@ -344,7 +344,7 @@ func TestAHeldBoxChecksAndAppliesNothing(t *testing.T) {
 	if _, ok := pointerValue(t, store, "staged"); ok {
 		t.Fatal("a held box staged a release")
 	}
-	if applied, err := applyStaged(store, []string{public}, releaseNow); err != nil || applied.Outcome != applyNothing {
+	if applied, err := applyStaged(store, []string{public}, releaseNow, offering(source.served)); err != nil || applied.Outcome != applyNothing {
 		t.Fatalf("a held box's apply gave %+v, %v", applied, err)
 	}
 	if got := ledgerOutcomes(t, store); len(got) != 0 {
@@ -364,7 +364,7 @@ func TestRefusesAStagedFileChangedBeforeApply(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store.dir(2), "preflight.sh"), []byte("owt"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	result, err := applyStaged(store, []string{public}, releaseNow)
+	result, err := applyStaged(store, []string{public}, releaseNow, offering(source.served))
 	if err != nil || result.Outcome != applyRefused || !strings.Contains(result.Reason, "changed after it was staged") {
 		t.Fatalf("a staged file changed overnight gave %+v, %v", result, err)
 	}

@@ -181,6 +181,7 @@ mkdir -p "$CONFIG_DIR" "${work}/preflight"
 binary_report_json() { BINARY_JSON=""; }
 consent_report_json() { CONSENT_JSON=""; }
 script_report_json() { SCRIPT_JSON=""; }
+update_attempts_json() { UPDATE_ATTEMPTS_JSON=""; }
 RUN_STARTED="2026-10-05T09:00:00Z" CRED_FAILED=0 CAP_JSON='{"name":"kerberos","state":"reached"}' CREDENTIAL_SOURCE="portal"
 report() {
   local mode="$1"

@@ -47,10 +47,19 @@ package main
 //     link. A rename of one file is atomic, as the design asks, and works the
 //     same on the Windows build machine where these tests run, where a symbolic
 //     link needs a privilege.
-//   - Nothing here is called by preflight.sh or the timer yet. Wiring it in,
+//   - ~~Nothing here is called by preflight.sh or the timer yet. Wiring it in,
 //     the portal route that serves a release's files, carrying the ledger on
-//     the run report, and the about-to-apply call are the rest of slice 6, and
-//     retiring `git pull` is slice 8, which is Jackie's.
+//     the run report, and the about-to-apply call are the rest of slice 6~~
+//     *Built where it stands by WO-1018-N62 item 1:* the portal source, the
+//     about-to-apply call and the check before `current` moves are in
+//     release_apply.go; the binary's -stage-release, -apply-release,
+//     -settle-release and -update-attempts modes are in main.go; the run report
+//     carries the ledger. **The timer and preflight.sh do not call the three
+//     steps yet**, because entering the current release's preflight.sh changes
+//     what the unit runs, which Jackie's ruling of 23 September 2026 fixes as
+//     the same script a person runs by hand. That entry is proposed in
+//     REPORT-WO-1018-N62, not built. Retiring `git pull` is slice 8, which is
+//     Jackie's.
 
 import (
 	"crypto/rand"
@@ -333,6 +342,13 @@ func stageRelease(store releaseStore, source releaseSource, trusted []string, no
 	if held != "" {
 		return releaseResult{Outcome: stageHeld, Reason: held}, nil
 	}
+	// No signed release offered at all is the state of a portal before its first
+	// signed release, and is not a refusal: there is nothing to stage, and no
+	// attempt, so a box does not alert every night for a release nobody signed.
+	// WO-1018-N62 item 1. A release offered and not verifiable is refused below.
+	if served == nil {
+		return releaseResult{Outcome: stageNothingNewer, Reason: "the portal offers no signed release"}, nil
+	}
 	highest, _, err := readPointer(store.pointer("applied"))
 	if err != nil {
 		reason := fmt.Sprintf("REFUSED: %v. Nothing was staged", err)
@@ -345,6 +361,10 @@ func stageRelease(store releaseStore, source releaseSource, trusted []string, no
 	}
 	if manifest.Format == releaseFormat {
 		return releaseResult{Outcome: stageBinaryOnly, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d lists the binary alone, so there are no scripts to stage", manifest.Sequence)}, nil
+	}
+	if err := binaryTooOld(manifest, "staged"); err != nil {
+		reason := err.Error()
+		return releaseResult{Outcome: stageRefused, Sequence: manifest.Sequence, Reason: reason}, store.record(updateAttempt{Outcome: attemptRefused, Sequence: manifest.Sequence, Reason: reason}, now)
 	}
 	if manifest.Sequence == highest {
 		return releaseResult{Outcome: stageNothingNewer, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d is the one applied here", manifest.Sequence)}, nil
@@ -432,6 +452,9 @@ func verifyStaged(store releaseStore, sequence int64, trusted []string, now time
 	if manifest.Sequence != sequence || manifest.Format != releaseFormatScripts {
 		return manifest, fmt.Errorf("REFUSED: the manifest staged as release %d is release %d, format %q. Nothing was applied", sequence, manifest.Sequence, manifest.Format)
 	}
+	if err := binaryTooOld(manifest, "applied"); err != nil {
+		return manifest, err
+	}
 	for _, file := range manifest.Scripts.Files {
 		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file.Path)))
 		if err != nil {
@@ -444,8 +467,9 @@ func verifyStaged(store releaseStore, sequence int64, trusted []string, now time
 	return manifest, nil
 }
 
-// applyStaged is the start-of-run step.
-func applyStaged(store releaseStore, trusted []string, now time.Time) (releaseResult, error) {
+// applyStaged is the start-of-run step. The gate is the portal, asked just
+// before `current` moves (release_apply.go, WO-1018-N62 item 0c).
+func applyStaged(store releaseStore, trusted []string, now time.Time, gate applyGate) (releaseResult, error) {
 	if _, onTrial, err := readPointer(store.pointer("trial")); err != nil {
 		return releaseResult{}, err
 	} else if onTrial {
@@ -471,6 +495,9 @@ func applyStaged(store releaseStore, trusted []string, now time.Time) (releaseRe
 		}
 		reason := err.Error()
 		return releaseResult{Outcome: applyRefused, Sequence: staged, Reason: reason}, store.record(updateAttempt{Outcome: attemptRefused, Sequence: staged, Reason: reason, FromCommit: store.currentCommit(), ToCommit: manifest.scriptsCommitOrEmpty()}, now)
+	}
+	if stopped, stop, err := gateApply(store, gate, trusted, now, staged, highest, manifest.scriptsCommitOrEmpty()); err != nil || stop {
+		return stopped, err
 	}
 	if current, has, err := readPointer(store.pointer("current")); err != nil {
 		return releaseResult{}, err

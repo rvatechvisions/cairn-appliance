@@ -367,6 +367,16 @@ func main() {
 		"read a run report from stdin and post it to the portal, signed")
 	update := flag.Bool("update", false,
 		"fetch the binary the portal names, verify its SHA-256 against the manifest, and only then put it in place")
+	// Slice 6, WO-1018-N60 and WO-1018-N62 item 1: scripts by signed manifest.
+	stageScripts := flag.Bool("stage-release", false,
+		"at the end of a run: fetch the newest signed release from -portal, verify it and every script it lists, and stage it beside the running copy")
+	applyScripts := flag.Bool("apply-release", false,
+		"at the start of a run: verify the staged release again, declare it to -portal, and move current only where the portal recorded it and still offers it")
+	settleScripts := flag.Bool("settle-release", false,
+		"after a run: confirm the release on trial, or move current back where -run-failed names why the run failed")
+	runFailed := flag.String("run-failed", "", "for -settle-release: why preflight.sh itself failed on the release on trial; empty means the run completed")
+	updateAttempts := flag.Bool("update-attempts", false,
+		"print this box's newest update attempts as the run report's updateAttempts list, and exit")
 	collect := flag.Bool("collect-dhcp", false,
 		"read every scope on -server and submit the derived inventory to -portal, signed")
 	collectZabbixHosts := flag.Bool("collect-zabbix", false,
@@ -432,7 +442,27 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *collectProxmoxGuests || *collectAdChecks || *relay || *update {
+	// Neither asks the portal anything, so neither needs -portal or the key.
+	if *updateAttempts {
+		listed, err := updateAttemptsJSON(defaultReleaseStore())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight: the update ledger could not be read:", err)
+			os.Exit(1)
+		}
+		fmt.Println(listed)
+		return
+	}
+	if *settleScripts {
+		result, err := settleRun(defaultReleaseStore(), *runFailed != "", *runFailed, time.Now())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			os.Exit(1)
+		}
+		printRelease("settle", result)
+		return
+	}
+
+	if doEnrol || *fetch || *report || *collect || *collectZabbixHosts || *collectVsphereVMs || *collectMecmSystems || *collectProxmoxGuests || *collectAdChecks || *relay || *update || *stageScripts || *applyScripts {
 		if *portalURL == "" {
 			fmt.Fprintln(os.Stderr,
 				"preflight: -portal is required with -enroll, -fetch, -report, -collect-dhcp, -collect-zabbix, -collect-vsphere, -collect-mecm or -collect-proxmox")
@@ -482,6 +512,25 @@ func main() {
 			fmt.Fprintln(os.Stderr,
 				"preflight: no -fingerprint, and this box has not recorded one. Enrol first.")
 			os.Exit(2)
+		}
+
+		if *stageScripts || *applyScripts {
+			source := portalRelease{portal: *portalURL, fingerprint: bound, private: private}
+			var result releaseResult
+			var err error
+			step := "stage"
+			if *applyScripts {
+				step = "apply"
+				result, err = applyStaged(defaultReleaseStore(), trustedReleaseKeys, time.Now(), source)
+			} else {
+				result, err = stageRelease(defaultReleaseStore(), source, trustedReleaseKeys, time.Now())
+			}
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "preflight:", err)
+				os.Exit(1)
+			}
+			printRelease(step, result)
+			return
 		}
 
 		if *update {

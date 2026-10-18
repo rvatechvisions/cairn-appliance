@@ -2983,6 +2983,24 @@ script_report_json() {
   SCRIPT_JSON="$(printf ',"script":{"commit":"%s","state":"%s"}' "$SCRIPT_ID_COMMIT" "$SCRIPT_ID_STATE")"
 }
 
+# This box's update attempts, for the run report. WO-1018-N62 item 1, slice 6:
+# the stage, apply and settle steps write each attempt to a ledger on the box,
+# and the portal reads the run report's updateAttempts list into slice 1's
+# record, keeping each attempt id once. So every report carries the newest
+# fifty, and a report sent twice writes nothing twice. A binary that predates
+# the ledger does not know -update-attempts and the field is left out, which
+# the portal reads as none reported, never as none made.
+UPDATE_ATTEMPTS_JSON=""
+update_attempts_json() {
+  local binary="$1" listed
+  UPDATE_ATTEMPTS_JSON=""
+  [ -x "$binary" ] || return 0
+  listed="$("$binary" -update-attempts 2>/dev/null)" || listed=""
+  case "$listed" in
+    "["*"]") UPDATE_ATTEMPTS_JSON=",\"updateAttempts\":${listed}" ;;
+  esac
+}
+
 submit_run_report() {
   local finished payload status
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -3031,6 +3049,7 @@ submit_run_report() {
   binary_report_json "${HERE}/preflight/preflight"
   consent_report_json
   script_report_json
+  update_attempts_json "${HERE}/preflight/preflight"
 
   # Where the credential came from, as one of the seven values the portal's
   # credential_source column accepts. WO-1004-L items 2 and 6. Left out when the
@@ -3045,13 +3064,13 @@ submit_run_report() {
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json"
+      printf '%s%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json"
+      printf '%s%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
     } >"$payload"
   fi
 
@@ -3109,6 +3128,17 @@ submit_run_report
 
 say ""
 say "Nothing was collected and nothing on the domain was changed."
+
+# **This run reached its end.** WO-1018-N62 item 1, slice 6. A release on trial
+# is moved back only where preflight.sh itself failed on it, and never where a
+# reader was refused, which is a fact about the far end. The exit status cannot
+# tell the two apart, because a refusal exits 1, so whoever starts the run names
+# a file in CAIRN_RUN_COMPLETED_FILE and this line writes it as the run's last
+# act. A run that died before here leaves no file, and only that is a failure
+# of the scripts. A hand run sets nothing, and writes nothing.
+if [ -n "${CAIRN_RUN_COMPLETED_FILE:-}" ]; then
+  : >"$CAIRN_RUN_COMPLETED_FILE"
+fi
 
 # Exit non-zero only when something was genuinely refused. Nothing-asked is not
 # a failure of this host; it is a gap in what it was told.

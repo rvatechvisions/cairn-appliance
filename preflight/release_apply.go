@@ -224,6 +224,12 @@ func heldSentence(body []byte) string {
 	return "The portal says this appliance's organization holds its updates."
 }
 
+// Binary fetches the release's binary by its SHA-256, from the door -update
+// already uses. Slice 7.
+func (p portalRelease) Binary(digest string) ([]byte, error) {
+	return signedFetch(p.portal, "/appliance/binary/"+digest, p.fingerprint, p.private)
+}
+
 // File fetches one listed file by its SHA-256.
 func (p portalRelease) File(digest string) ([]byte, error) {
 	status, body, err := signedRequest(p.portal, "/appliance/release/file/"+digest, p.fingerprint, p.private)

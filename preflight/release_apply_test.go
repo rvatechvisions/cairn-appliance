@@ -162,7 +162,8 @@ func TestAReleaseNeedingANewerBinaryIsNotStaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := &fakeSource{served: served(message, fixtureSign(t, private, releaseNamespace, message)), files: map[string][]byte{digestOf(content): content}}
-	store := releaseStore{root: t.TempDir()}
+	// Its binary is the one installed, so its scripts would run on this binary.
+	store := storeWithInstalled(t, []byte("binary"))
 	result, err := stageRelease(store, source, []string{public}, releaseNow)
 	if err != nil || result.Outcome != stageRefused || !strings.Contains(result.Reason, "binary too old") {
 		t.Fatalf("a release needing a newer binary gave %+v, %v; want refused, binary too old", result, err)

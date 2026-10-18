@@ -377,6 +377,8 @@ func main() {
 	runFailed := flag.String("run-failed", "", "for -settle-release: why preflight.sh itself failed on the release on trial; empty means the run completed")
 	updateAttempts := flag.Bool("update-attempts", false,
 		"print this box's newest update attempts as the run report's updateAttempts list, and exit")
+	currentRelease := flag.Bool("current-release", false,
+		"print the directory of the release this box runs, and its scripts commit, or nothing where none is current, and exit")
 	collect := flag.Bool("collect-dhcp", false,
 		"read every scope on -server and submit the derived inventory to -portal, signed")
 	collectZabbixHosts := flag.Bool("collect-zabbix", false,
@@ -442,7 +444,20 @@ func main() {
 	// Either spelling means the same act.
 	doEnrol := *enrolling || *enrollUS
 
-	// Neither asks the portal anything, so neither needs -portal or the key.
+	// None of these asks the portal anything, so none needs -portal or the key.
+	if *currentRelease {
+		store := defaultReleaseStore()
+		dir, err := store.currentDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight: the current release could not be read:", err)
+			os.Exit(1)
+		}
+		if dir != "" {
+			fmt.Println(dir)
+			fmt.Println(store.currentCommit())
+		}
+		return
+	}
 	if *updateAttempts {
 		listed, err := updateAttemptsJSON(defaultReleaseStore())
 		if err != nil {

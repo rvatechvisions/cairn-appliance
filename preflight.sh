@@ -80,6 +80,59 @@ fi
 # shellcheck disable=SC1090
 . "$SETTINGS"
 
+# ---------------------------------------------------------------------------
+# The release this box runs. WO-1018-N63 item 0b, slices 6 and 7.
+# ---------------------------------------------------------------------------
+#
+# **This file is what the timer runs and what a person runs**, Jackie's ruling
+# of 23 September 2026 in systemd/cairn-preflight.service, so the entry into a
+# signed release is here and not in the unit. Before anything else:
+#   1. the binary applies a staged release, asking the portal first;
+#   2. if a release is current, its own preflight.sh runs, with its own binary,
+#      and this run waits for it;
+#   3. that run is settled: confirmed where it reached its end, moved back,
+#      binary and scripts together, where it did not;
+#   4. the newest release is staged for the next run.
+# A run inside a release sets CAIRN_IN_RELEASE, so it does not enter again.
+#
+# **A binary that cannot say which release is current runs this file as
+# before**, and says so. That is every box until its binary carries slice 6, so
+# the entry changes nothing on a box that has not been given it.
+RELEASE_STAGE_AT_END=0
+release_entry() {
+  local binary="${HERE}/preflight/preflight" listed dir commit marker status=0
+  [ -z "${CAIRN_IN_RELEASE:-}" ] || return 0
+  if [ -z "${CAIRN_PORTAL:-}" ] || [ ! -f "${CONFIG_DIR}/appliance.key" ] || [ ! -x "$binary" ]; then
+    return 0
+  fi
+  if ! listed="$("$binary" -current-release 2>&1)"; then
+    say "release: this binary cannot say which release is current, so this run uses the scripts beside it: $(printf '%s' "$listed" | head -n 1)"
+    return 0
+  fi
+  "$binary" -portal "${CAIRN_PORTAL}" -apply-release || say "release: the apply step did not finish, so this run uses what was current"
+  listed="$("$binary" -current-release 2>&1)" || listed=""
+  dir="$(printf '%s\n' "$listed" | sed -n 1p)"
+  commit="$(printf '%s\n' "$listed" | sed -n 2p)"
+  if [ -z "$dir" ] || [ ! -f "${dir}/preflight.sh" ]; then
+    # No release is current: this file runs, and stages one at its end.
+    RELEASE_STAGE_AT_END=1
+    return 0
+  fi
+  marker="$(mktemp)"
+  rm -f "$marker"
+  CAIRN_IN_RELEASE=1 CAIRN_RELEASE_COMMIT="$commit" CAIRN_RUN_COMPLETED_FILE="$marker" bash "${dir}/preflight.sh" "$@" || status=$?
+  if [ -f "$marker" ]; then
+    "$binary" -settle-release || say "release: the settle step did not finish"
+  else
+    "$binary" -settle-release -run-failed "preflight.sh of the current release did not reach its end (exit ${status})" \
+      || say "release: the settle step did not finish"
+  fi
+  rm -f "$marker"
+  "$binary" -portal "${CAIRN_PORTAL}" -stage-release || say "release: the stage step did not finish"
+  exit "$status"
+}
+release_entry "$@"
+
 # What settings.env still carries, kept UNDER ITS OWN NAMES rather than
 # loaded straight into the three variables the run uses.
 #
@@ -420,6 +473,14 @@ choose_dhcp_servers() {
 script_identity() {
   SCRIPT_ID_STATE="" SCRIPT_ID_COMMIT="" SCRIPT_ID_REASON=""
   local commit changes
+  # A release's scripts are not a git checkout. Every file was checked against
+  # the signed manifest before the release became current, so the commit the
+  # manifest names is the commit, and nothing here was edited. WO-1018-N63.
+  if [ -n "${CAIRN_IN_RELEASE:-}" ] && printf '%s' "${CAIRN_RELEASE_COMMIT:-}" | grep -Eq '^[0-9a-f]{40}$'; then
+    SCRIPT_ID_COMMIT="$CAIRN_RELEASE_COMMIT"
+    SCRIPT_ID_STATE="clean"
+    return 0
+  fi
   if ! commit="$(git -C "$HERE" rev-parse HEAD 2>&1)" || ! printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
     SCRIPT_ID_STATE="unknown"
     SCRIPT_ID_REASON="git could not say which commit this script is: $(printf '%s' "$commit" | head -n 1)"
@@ -3138,6 +3199,12 @@ say "Nothing was collected and nothing on the domain was changed."
 # of the scripts. A hand run sets nothing, and writes nothing.
 if [ -n "${CAIRN_RUN_COMPLETED_FILE:-}" ]; then
   : >"$CAIRN_RUN_COMPLETED_FILE"
+fi
+
+# With no release current, this file ran, and the newest release is staged for
+# the next run (release_entry above). WO-1018-N63 item 0b.
+if [ "$RELEASE_STAGE_AT_END" -eq 1 ]; then
+  "${HERE}/preflight/preflight" -portal "${CAIRN_PORTAL}" -stage-release || say "release: the stage step did not finish"
 fi
 
 # Exit non-zero only when something was genuinely refused. Nothing-asked is not

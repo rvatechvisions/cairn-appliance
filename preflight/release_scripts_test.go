@@ -68,8 +68,20 @@ type fakeSource struct {
 	held         string
 	served       *signedRelease
 	files        map[string][]byte
+	binaries     map[string][]byte
 	err          error
 	releaseCalls int
+	binaryCalls  int
+}
+
+// Binary serves a release's binary by its digest, slice 7.
+func (f *fakeSource) Binary(digest string) ([]byte, error) {
+	f.binaryCalls++
+	content, ok := f.binaries[digest]
+	if !ok {
+		return nil, errors.New("not served")
+	}
+	return content, nil
 }
 
 func (f *fakeSource) Release() (string, *signedRelease, error) {
@@ -95,7 +107,7 @@ func scriptsRelease(t *testing.T, sequence int64, expires time.Time, files map[s
 	manifest.Binary.Size = 6
 	manifest.Binary.Commit = strings.Repeat("b", 40)
 	manifest.Scripts = &releaseScripts{Commit: strings.Repeat(strconv.FormatInt(sequence%10, 10), 40)}
-	source := &fakeSource{files: map[string][]byte{}}
+	source := &fakeSource{files: map[string][]byte{}, binaries: map[string][]byte{digestOf([]byte("binary")): []byte("binary")}}
 	for _, name := range sortedKeys(files) {
 		content := []byte(files[name])
 		manifest.Scripts.Files = append(manifest.Scripts.Files, releaseScript{Path: name, Digest: digestOf(content), Size: int64(len(content))})

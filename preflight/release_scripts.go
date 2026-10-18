@@ -121,18 +121,29 @@ func validScripts(scripts *releaseScripts) error {
 		if file.Size < 0 {
 			return fmt.Errorf("name a negative size for %q", file.Path)
 		}
+		if file.Path == releaseBinaryPath {
+			return fmt.Errorf("name %q as a script, which is where the release's binary goes", file.Path)
+		}
 	}
 	return nil
 }
 
-// releaseStore is where staged and applied script releases live, each in a
-// directory of its own named by sequence, with the pointer files beside them.
+// releaseStore is where staged and applied releases live, each in a directory
+// of its own named by sequence, with the pointer files beside them. installed
+// is the binary a person installed, the one the timer's entry runs
+// (release_apply.go): a release whose binary is that one is staged with a copy
+// of it rather than a fetch.
 type releaseStore struct {
-	root string
+	root      string
+	installed string
 }
 
 func defaultReleaseStore() releaseStore {
-	return releaseStore{root: filepath.Join(filepath.Dir(keyPath), "releases")}
+	installed, err := os.Executable()
+	if err != nil {
+		installed = ""
+	}
+	return releaseStore{root: filepath.Join(filepath.Dir(keyPath), "releases"), installed: installed}
 }
 
 func (s releaseStore) dir(sequence int64) string {
@@ -304,6 +315,8 @@ func (s releaseStore) currentCommit() string {
 type releaseSource interface {
 	Release() (held string, served *signedRelease, err error)
 	File(digest string) ([]byte, error)
+	// Binary fetches the release's binary by its SHA-256. Slice 7.
+	Binary(digest string) ([]byte, error)
 }
 
 // Outcomes of a stage, an apply and a settle, as the box prints them.
@@ -362,9 +375,22 @@ func stageRelease(store releaseStore, source releaseSource, trusted []string, no
 	if manifest.Format == releaseFormat {
 		return releaseResult{Outcome: stageBinaryOnly, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d lists the binary alone, so there are no scripts to stage", manifest.Sequence)}, nil
 	}
-	if err := binaryTooOld(manifest, "staged"); err != nil {
-		reason := err.Error()
+	// Slice 7, WO-1018-N63 item 1: the release's binary is staged beside its
+	// scripts, so one move of `current` changes both. A release whose binary is
+	// the one installed carries the scripts alone, as N62's did, and only then
+	// does oldestBinary decide anything: a release that brings its own binary is
+	// the update that meets the level, and is never blocked by it.
+	if err := validManifest(binaryManifest{Digest: manifest.Binary.Digest, Commit: manifest.Binary.Commit, Size: manifest.Binary.Size}); err != nil {
+		reason := fmt.Sprintf("REFUSED: signed release %d's binary entry is not one a box can stage: %v. Nothing was staged", manifest.Sequence, err)
 		return releaseResult{Outcome: stageRefused, Sequence: manifest.Sequence, Reason: reason}, store.record(updateAttempt{Outcome: attemptRefused, Sequence: manifest.Sequence, Reason: reason}, now)
+	}
+	installed, installedErr := store.installedBinary()
+	carriesOwnBinary := installedErr != nil || digestOf(installed) != manifest.Binary.Digest
+	if !carriesOwnBinary {
+		if err := binaryTooOld(manifest, "staged"); err != nil {
+			reason := err.Error()
+			return releaseResult{Outcome: stageRefused, Sequence: manifest.Sequence, Reason: reason}, store.record(updateAttempt{Outcome: attemptRefused, Sequence: manifest.Sequence, Reason: reason}, now)
+		}
 	}
 	if manifest.Sequence == highest {
 		return releaseResult{Outcome: stageNothingNewer, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d is the one applied here", manifest.Sequence)}, nil
@@ -412,6 +438,34 @@ func stageRelease(store releaseStore, source releaseSource, trusted []string, no
 			return refuse(fmt.Sprintf("REFUSED: %s as written does not hash to signed release %d. Nothing was staged", file.Path, manifest.Sequence))
 		}
 	}
+	// The binary, after every script, so a release refused for any one file
+	// stages no binary either: both or neither.
+	binary := installed
+	if carriesOwnBinary {
+		fetched, err := source.Binary(manifest.Binary.Digest)
+		if err != nil {
+			_ = os.RemoveAll(incoming)
+			reason := fmt.Sprintf("could not fetch the binary %s: %v", manifest.Binary.Digest, err)
+			return releaseResult{Outcome: stageUnreachable, Sequence: manifest.Sequence, Reason: reason}, store.record(updateAttempt{Outcome: attemptUnreachable, Sequence: manifest.Sequence, Reason: reason}, now)
+		}
+		binary = fetched
+	}
+	if int64(len(binary)) != manifest.Binary.Size {
+		return refuse(fmt.Sprintf("REFUSED: the binary arrived as %d bytes and signed release %d names %d. Nothing was staged", len(binary), manifest.Sequence, manifest.Binary.Size))
+	}
+	if got := digestOf(binary); got != manifest.Binary.Digest {
+		return refuse(fmt.Sprintf("REFUSED: the binary hashes to %s and signed release %d names %s. Nothing was staged", got, manifest.Sequence, manifest.Binary.Digest))
+	}
+	binaryTarget := filepath.Join(incoming, filepath.FromSlash(releaseBinaryPath))
+	if err := os.MkdirAll(filepath.Dir(binaryTarget), 0o700); err != nil {
+		return releaseResult{}, err
+	}
+	if err := os.WriteFile(binaryTarget, binary, 0o700); err != nil {
+		return releaseResult{}, err
+	}
+	if landed, err := os.ReadFile(binaryTarget); err != nil || digestOf(landed) != manifest.Binary.Digest {
+		return refuse(fmt.Sprintf("REFUSED: the binary as written does not hash to signed release %d. Nothing was staged", manifest.Sequence))
+	}
 	if err := os.WriteFile(filepath.Join(incoming, "release.json"), message, 0o600); err != nil {
 		return releaseResult{}, err
 	}
@@ -430,7 +484,24 @@ func stageRelease(store releaseStore, source releaseSource, trusted []string, no
 	if err := writePointer(store.pointer("staged"), manifest.Sequence); err != nil {
 		return releaseResult{}, err
 	}
-	return releaseResult{Outcome: stageStaged, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d staged, %d scripts from %s, each matching its digest", manifest.Sequence, len(manifest.Scripts.Files), manifest.Scripts.Commit)}, nil
+	binarySaid := "the installed binary"
+	if carriesOwnBinary {
+		binarySaid = "its own binary " + manifest.Binary.Commit
+	}
+	return releaseResult{Outcome: stageStaged, Sequence: manifest.Sequence, Reason: fmt.Sprintf("signed release %d staged, %d scripts from %s and %s, each matching its digest", manifest.Sequence, len(manifest.Scripts.Files), manifest.Scripts.Commit, binarySaid)}, nil
+}
+
+// releaseBinaryPath is where a release's binary lies inside its directory: the
+// path preflight.sh runs as "${HERE}/preflight/preflight", so a release's
+// scripts run the release's binary. Slice 7, WO-1018-N63 item 1.
+const releaseBinaryPath = "preflight/preflight"
+
+// installedBinary is the bytes of the binary a person installed.
+func (s releaseStore) installedBinary() ([]byte, error) {
+	if s.installed == "" {
+		return nil, errors.New("this box could not locate its installed binary")
+	}
+	return os.ReadFile(s.installed)
 }
 
 // verifyStaged checks a staged release again as it lies on disk: the signature,
@@ -452,8 +523,10 @@ func verifyStaged(store releaseStore, sequence int64, trusted []string, now time
 	if manifest.Sequence != sequence || manifest.Format != releaseFormatScripts {
 		return manifest, fmt.Errorf("REFUSED: the manifest staged as release %d is release %d, format %q. Nothing was applied", sequence, manifest.Sequence, manifest.Format)
 	}
-	if err := binaryTooOld(manifest, "applied"); err != nil {
-		return manifest, err
+	if installed, err := store.installedBinary(); err == nil && digestOf(installed) == manifest.Binary.Digest {
+		if err := binaryTooOld(manifest, "applied"); err != nil {
+			return manifest, err
+		}
 	}
 	for _, file := range manifest.Scripts.Files {
 		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file.Path)))
@@ -464,7 +537,25 @@ func verifyStaged(store releaseStore, sequence int64, trusted []string, now time
 			return manifest, fmt.Errorf("REFUSED: %s changed after it was staged: it hashes to %s and signed release %d names %s. Nothing was applied", file.Path, got, sequence, file.Digest)
 		}
 	}
+	// Slice 7: the binary is part of the release and is checked the same way.
+	binary, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(releaseBinaryPath)))
+	if err != nil {
+		return manifest, fmt.Errorf("REFUSED: staged release %d is missing its binary. Nothing was applied", sequence)
+	}
+	if got := digestOf(binary); got != manifest.Binary.Digest || int64(len(binary)) != manifest.Binary.Size {
+		return manifest, fmt.Errorf("REFUSED: the binary changed after it was staged: it hashes to %s and signed release %d names %s. Nothing was applied", got, sequence, manifest.Binary.Digest)
+	}
 	return manifest, nil
+}
+
+// currentDir is the directory of the release `current` names, or empty where
+// none is current. The timer's entry runs that release's preflight.sh.
+func (s releaseStore) currentDir() (string, error) {
+	current, ok, err := readPointer(s.pointer("current"))
+	if err != nil || !ok {
+		return "", err
+	}
+	return s.dir(current), nil
 }
 
 // applyStaged is the start-of-run step. The gate is the portal, asked just

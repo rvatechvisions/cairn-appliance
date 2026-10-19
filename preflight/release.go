@@ -222,32 +222,67 @@ func trustedKeys(lines []string) ([]ssh.PublicKey, error) {
 	return keys, nil
 }
 
+// unsignedReleasePermit is the file whose presence lets this box take a release
+// the portal sent with no signature.
+//
+// Approved by Jackie Ramsey in Asana on 19 October 2026: "ACTION (you, at the
+// build machine, ~5 min): let VS make the one edit so RVA's box can take
+// release 2" (card 1219663784344206, completed 20:51:05 UTC), quoted in
+// WO-1019-N81 item 1. Under his decision recorded in the portal's CLAUDE.md
+// (5e36e8c0, card 1219642376207989, "yes"): a release may be published and
+// taken by RVA's box without his signature; the box still verifies the
+// published digest before anything runs; only the signature check is waived,
+// and only on RVA's box.
+//
+// The box cannot tell from anything the portal sends whether it is RVA's, so
+// the waiver is a fact about the box: the permit is placed on RVA's appliance
+// alone, no client box has it, and without it an unsigned release is refused
+// exactly as before. A var so a test can point it at a temporary file.
+var unsignedReleasePermit = "/etc/cairn-appliance/release-unsigned-permitted"
+
+func unsignedPermitted() bool {
+	_, err := os.Stat(unsignedReleasePermit)
+	return err == nil
+}
+
 // verifyRelease is the whole check, before any byte of a binary is fetched.
+//
+// A release sent with a signature is verified against it, as it always was,
+// permit or no permit. A release sent with none is taken only where this box
+// holds the permit above. Either way the format, expiry and sequence checks
+// below still hold, and every caller still checks each fetched byte against
+// the manifest's digests before anything runs.
 func verifyRelease(served *signedRelease, trusted []string, now time.Time, highestApplied int64) (releaseManifest, error) {
 	var manifest releaseManifest
-	if served == nil || served.Manifest == "" || served.Signature == "" {
+	if served == nil || served.Manifest == "" {
 		return manifest, errors.New("REFUSED: unsigned: the portal served no signed release manifest. Nothing was installed")
 	}
-	keys, err := trustedKeys(trusted)
-	if err != nil {
-		return manifest, err
+	unsigned := served.Signature == ""
+	if unsigned && !unsignedPermitted() {
+		return manifest, errors.New("REFUSED: unsigned: the portal served a release manifest with no signature, and this box holds no permit to take one. Nothing was installed")
 	}
 	message, err := base64.StdEncoding.DecodeString(served.Manifest)
 	if err != nil {
 		return manifest, fmt.Errorf("REFUSED: the release manifest is not base64. Nothing was installed")
 	}
-	signer, err := verifySSHSig(served.Signature, releaseNamespace, message)
-	if err != nil {
-		return manifest, fmt.Errorf("REFUSED: mis-signed: %v. Nothing was installed", err)
-	}
-	trustedSigner := false
-	for _, key := range keys {
-		if bytes.Equal(key.Marshal(), signer.Marshal()) {
-			trustedSigner = true
+	if !unsigned {
+		keys, err := trustedKeys(trusted)
+		if err != nil {
+			return manifest, err
 		}
-	}
-	if !trustedSigner {
-		return manifest, fmt.Errorf("REFUSED: signed by %s, a key this box does not trust. Nothing was installed", ssh.FingerprintSHA256(signer))
+		signer, err := verifySSHSig(served.Signature, releaseNamespace, message)
+		if err != nil {
+			return manifest, fmt.Errorf("REFUSED: mis-signed: %v. Nothing was installed", err)
+		}
+		trustedSigner := false
+		for _, key := range keys {
+			if bytes.Equal(key.Marshal(), signer.Marshal()) {
+				trustedSigner = true
+			}
+		}
+		if !trustedSigner {
+			return manifest, fmt.Errorf("REFUSED: signed by %s, a key this box does not trust. Nothing was installed", ssh.FingerprintSHA256(signer))
+		}
 	}
 	if err := json.Unmarshal(message, &manifest); err != nil {
 		return manifest, fmt.Errorf("REFUSED: the signed manifest does not parse: %v. Nothing was installed", err)

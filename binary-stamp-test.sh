@@ -84,7 +84,7 @@ esac
 # The fragment reaches both shapes of the report.
 # Matched on the arguments rather than the format string, which grew a third
 # field for the consent list in WO-1004-I item 1.
-uses="$(grep -c '^ *printf .%s%s[%s]*}. "\$interval_json" "\$BINARY_JSON"' "$SCRIPT")"
+uses="$(grep -c '^ *printf .%s%s[%s]*}. "\$interval_json" \("\$WINDOW_JSON" \)\{0,1\}"\$BINARY_JSON"' "$SCRIPT")"
 [ "$uses" = "2" ] && ok "both report shapes carry the build" || bad "report shapes carrying the build: $uses, not 2"
 
 printf '\n%s checks, %s failed\n' "$checks" "$fails"

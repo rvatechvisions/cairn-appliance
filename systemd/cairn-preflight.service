@@ -53,6 +53,14 @@ SuccessExitStatus=0 1
 # 1440 = daily. It must agree with OnCalendar in the timer beside this file.
 Environment=CAIRN_INTERVAL_MINUTES=1440
 
+# The run window, declared beside the interval so a portal deploy can refuse to
+# restart while a run is under way. WO-1019-N75 item 4. Opens at the timer's
+# OnCalendar time of day, and lasts its RandomizedDelaySec plus this unit's
+# TimeoutStartSec: 45 + 30 = 75 minutes. window-declaration-test.sh fails when
+# these and the timer disagree. The zone is the box's own, read at run time.
+Environment=CAIRN_WINDOW_OPENS_AT=05:00
+Environment=CAIRN_WINDOW_MINUTES=75
+
 ExecStart=/opt/cairn-appliance/preflight.sh
 
 # Root, because the appliance key is 600 root:root and preflight.sh refuses to

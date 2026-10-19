@@ -946,6 +946,8 @@ capability_credential_source || true
 # The run is then reported as could-not-start, naming why.
 # ---------------------------------------------------------------------------
 . "${HERE}/consent.sh"
+# The run window this box declares, beside its interval. WO-1019-N75 item 4.
+. "${HERE}/run-window.sh"
 choose_dhcp_servers "$PC_DHCP_SERVERS" "${CAIRN_DHCP_SERVERS:-}" "$CREDENTIAL_SOURCE"
 say ""
 say "settled for this run:"
@@ -3107,6 +3109,7 @@ submit_run_report() {
     fi
   fi
 
+  declare_window
   binary_report_json "${HERE}/preflight/preflight"
   consent_report_json
   script_report_json
@@ -3125,13 +3128,13 @@ submit_run_report() {
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"could-not-start","reason":"%s"' "$(json_safe "$CRED_REASON")"
-      printf '%s%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
+      printf '%s%s%s%s%s%s%s}' "$interval_json" "$WINDOW_JSON" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
     } >"$payload"
   else
     {
       printf '{"startedAt":"%s","finishedAt":"%s"' "$RUN_STARTED" "$finished"
       printf ',"outcome":"ran","capabilities":[%s]' "$CAP_JSON"
-      printf '%s%s%s%s%s%s}' "$interval_json" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
+      printf '%s%s%s%s%s%s%s}' "$interval_json" "$WINDOW_JSON" "$BINARY_JSON" "$CONSENT_JSON" "$SCRIPT_JSON" "$credential_json" "$UPDATE_ATTEMPTS_JSON"
     } >"$payload"
   fi
 

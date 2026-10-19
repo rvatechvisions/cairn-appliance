@@ -47,6 +47,9 @@ lift() {
   printf '%s\n' "$body"
 }
 say() { printf '%s\n' "$*"; }
+# The run window this box declares, which submit_run_report reads. WO-1019-N75 item 4.
+# shellcheck source=run-window.sh
+. "${HERE}/run-window.sh"
 for fn in read_reader binary_declares json_safe first_reason run_capability submit_run_report; do
   eval "$(lift "$fn")"
 done

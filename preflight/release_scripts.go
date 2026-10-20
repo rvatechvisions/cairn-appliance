@@ -54,12 +54,18 @@ package main
 //     about-to-apply call and the check before `current` moves are in
 //     release_apply.go; the binary's -stage-release, -apply-release,
 //     -settle-release and -update-attempts modes are in main.go; the run report
-//     carries the ledger. **The timer and preflight.sh do not call the three
+//     carries the ledger. ~~**The timer and preflight.sh do not call the three
 //     steps yet**, because entering the current release's preflight.sh changes
 //     what the unit runs, which Jackie's ruling of 23 September 2026 fixes as
 //     the same script a person runs by hand. That entry is proposed in
-//     REPORT-WO-1018-N62, not built. Retiring `git pull` is slice 8, which is
-//     Jackie's.
+//     REPORT-WO-1018-N62, not built.~~ *Corrected where it stands, the portal's
+//     APPLIANCE-BINARY-QUEUE.md item 7, 20 October 2026:* slice 7 built the
+//     entry (0ec432b). preflight.sh calls -apply-release, then runs the current
+//     release's own preflight.sh and calls -settle-release after it, and calls
+//     -stage-release for the next one; this comment was not swept with it.
+//     Retiring `git pull` is slice 8: on release 2 a box takes its code from
+//     releases, and what remains is the portal's CLAUDE.md passages, replaced
+//     in the commit that records a box running release 2.
 
 import (
 	"crypto/rand"

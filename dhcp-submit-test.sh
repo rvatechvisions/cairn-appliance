@@ -48,6 +48,14 @@ lift() {
 }
 eval "$(lift keep_submission_digest)"
 eval "$(lift capability_dhcp)"
+# The DHCP read asks binary_declares whether the binary says by exit 4 that
+# the portal refused (WO-1017-N47 item 2). It was not lifted, so every call
+# printed "command not found" and fell to the older arm, and the exit-4 arm
+# was never reached here. The portal's APPLIANCE-BINARY-QUEUE.md, WO-1020-N97
+# item 2. A binary that declares nothing is the default, so the checks below
+# exercise the older arm on purpose; the exit-4 arm has its own check.
+eval "$(lift binary_declares)"
+BINARY_SPEAKS=""
 say() { printf '%s\n' "$*"; }
 
 work="$(mktemp -d)"
@@ -84,6 +92,11 @@ case "\${STUB_MODE:-}" in
     echo "sending 900 bytes, body SHA-256 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     echo "preflight: refused (400): The submission is not the shape the contract describes: items. It will be refused identically every time, so fix the sender rather than retrying." >&2
     exit 1 ;;
+  portalrefused4)
+    echo "scopes: 2 attempted, 0 could not be read completely, 0 empty"
+    echo "devices: 14, from leases whose hardware address could be read; 0 refused as unreadable"
+    echo "preflight: Cairn's portal refused the submission (400): items" >&2
+    exit 4 ;;
   portalunreached)
     echo "scopes: 1 attempted, 0 could not be read completely, 0 empty"
     echo "devices: 3, from leases whose hardware address could be read; 0 refused as unreadable"
@@ -190,6 +203,23 @@ for mode in portalrefused portalunreached; do
   esac
 done
 unset STUB_MODE
+
+# WO-1017-N47 item 2, reached at last (WO-1020-N97 item 2): a binary that
+# declares error-source says by exit 4 that Cairn's portal refused, and that
+# is read before any words are matched.
+BINARY_SPEAKS="abilities: error-source"
+export STUB_MODE=portalrefused4
+binary_declares error-source && ok "the lifted binary_declares reads a declared ability" || bad "binary_declares did not read: $BINARY_SPEAKS"
+run_step
+[ "$REFUSED" -eq 0 ] && [ "$EMPTY" -eq 0 ] && [ "$FOUND" -eq 0 ] && [ "$UNTOLD" -eq 1 ] \
+  && ok "exit 4 from a declaring binary: the submission did not land, could not tell, never a refusal" \
+  || bad "exit 4: found ${FOUND}, empty ${EMPTY}, refused ${REFUSED}, untold ${UNTOLD}"
+case "$OUT" in
+  *"COULD NOT TELL: 1 of 1 DHCP server answered and was read, and what this box sent did not land at Cairn's portal. That is Cairn's, not the server's:"*"Cairn's portal refused the submission (400): items"*) ok "exit 4: and the stored line says it was Cairn's, in the binary's own words" ;;
+  *) bad "exit 4: printed: $OUT" ;;
+esac
+unset STUB_MODE
+BINARY_SPEAKS=""
 
 # WO-1004-N item 1: the chooser refused to name a server -- the portal named
 # none, or the portal and the settings file disagree. Nothing is asked, the

@@ -139,7 +139,12 @@ done < <(git ls-files '*.sh')
 # are handed and every caller today hands them a variable or nothing, so
 # nothing is extracted from them; they are listed, as keep_submission_digest
 # is above, so a literal handed to one later is read. WO-1015-N28 item 5.
-POSITIONED='refuse_install:2 refuse_disagreement:1 read_reader:3 read_reader:4 verify_and_install:1 verify_and_install:2 verify_and_install:3 binary_report_json:1 capability_dhcp:1'
+#
+# keep_authorized_read writes step 4's directory read to a file for the binary
+# and prints nothing to an operator; its callers hand it a status and a
+# variable, so nothing is extracted today. It is listed for the same reason, so
+# a literal handed to it later is read. Queue item 8, WO-1021-N113 item 1.
+POSITIONED='refuse_install:2 refuse_disagreement:1 read_reader:3 read_reader:4 verify_and_install:1 verify_and_install:2 verify_and_install:3 binary_report_json:1 capability_dhcp:1 keep_authorized_read:2'
 while IFS= read -r file; do
   [ -f "$file" ] || continue
   for entry in $POSITIONED; do

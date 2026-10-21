@@ -169,7 +169,7 @@ func TestSpeaksDeclaresWhatThisBinaryDoes(t *testing.T) {
 		t.Fatalf("speaks() = %q, want the credential block and an abilities: line", speaks())
 	}
 	declared := " " + strings.TrimPrefix(lines[1], "abilities: ") + " "
-	for _, ability := range []string{"error-source", "signed-release", "sessions-left-open", "sysvol-read"} {
+	for _, ability := range []string{"error-source", "signed-release", "sessions-left-open", "sysvol-read", "dhcp-authorizations"} {
 		if !strings.Contains(declared, " "+ability+" ") {
 			t.Errorf("-speaks does not declare %s: %q", ability, lines[1])
 		}

@@ -1933,10 +1933,35 @@ run_capability dns-zones capability_dns || true
 # question of *does any of this work at all* and is wrong here.
 # ---------------------------------------------------------------------------
 rule "4. Authorized DHCP servers, from the directory"
+# Queue item 8 in the portal repository's APPLIANCE-BINARY-QUEUE.md,
+# WO-1021-N113 item 1. What step 4 read, kept for the DHCP step to hand to a
+# binary that builds the two DHCP authorization findings from it, in the shape
+# -collect-ad takes: authorized.ldif, .status and .said. It is kept inside the
+# run's own private directory, which the exit trap removes, so nothing of it
+# outlives the run. With no such directory nothing is kept, and the binary
+# sends neither finding. The words a failed read printed are not kept: the
+# binary sends Cairn's own reason, never a tool's, whose words name hosts.
+AUTHORIZED_DIR=""
+keep_authorized_read() {
+  local status="$1" text="$2"
+  if [ -z "${CCDIR:-}" ] || [ ! -d "$CCDIR" ]; then
+    return 0
+  fi
+  AUTHORIZED_DIR="${CCDIR}/authorized"
+  if ! mkdir -p "$AUTHORIZED_DIR"; then
+    AUTHORIZED_DIR=""
+    return 0
+  fi
+  printf '%s\n' "$text" >"${AUTHORIZED_DIR}/authorized.ldif"
+  printf '%s\n' "$status" >"${AUTHORIZED_DIR}/authorized.status"
+  : >"${AUTHORIZED_DIR}/authorized.said"
+}
+
 capability_authorized_servers() {
   if [ "$LDAP_OK" -ne 0 ]; then
     say "NOT ASKED: the directory did not answer."
     UNASKED=$((UNASKED + 1))
+    keep_authorized_read 255 ""
     return 1
   fi
 
@@ -1951,6 +1976,7 @@ capability_authorized_servers() {
   # WO-1004-RS item 3: this printed REFUSED for any failure. It is a refusal
   # only where the directory answered no.
   if [ $status -ne 0 ]; then
+    keep_authorized_read "$status" ""
     printf '%s\n' "$out" | sed 's/^/  /'
     local said verdict
     said="$(tool_said "$out")"
@@ -2018,6 +2044,7 @@ capability_authorized_servers() {
   say ""
   say "  The authorized list is what the directory says; whether each of those"
   say "  servers still exists is a separate question this does not ask."
+  keep_authorized_read 0 "$out"
   FOUND=$((FOUND + 1))
   return 0
 }
@@ -2450,6 +2477,12 @@ capability_dhcp() {
     fi
     submit=1
     mode_args=(-portal "${CAIRN_PORTAL}" -collect-dhcp -server)
+    # Queue item 8: the authorized-server read step 4 kept, handed only to a
+    # binary that declares it reads it, because an older binary refuses a flag
+    # it does not know and would lose the whole DHCP read with it.
+    if [ -n "${AUTHORIZED_DIR:-}" ] && binary_declares dhcp-authorizations; then
+      mode_args=(-portal "${CAIRN_PORTAL}" -authorized-dir "$AUTHORIZED_DIR" -collect-dhcp -server)
+    fi
   fi
   local submitted=0 asked=0 empty=0 answered=0 refused=0 untold=0 notsent=0 notsent_said=""
   # "1 of 1 DHCP server", "1 of 2 DHCP servers": the noun follows the number it counts.

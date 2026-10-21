@@ -55,6 +55,8 @@ eval "$(lift capability_dhcp)"
 # item 2. A binary that declares nothing is the default, so the checks below
 # exercise the older arm on purpose; the exit-4 arm has its own check.
 eval "$(lift binary_declares)"
+eval "$(lift keep_authorized_read)"
+AUTHORIZED_DIR=""
 BINARY_SPEAKS=""
 say() { printf '%s\n' "$*"; }
 
@@ -231,6 +233,35 @@ run_step
 [ "$UNASKED" -eq 1 ] && [ "$REFUSED" -eq 0 ] && [ "$FOUND" -eq 0 ] && ok "and it is not asked, never refused" || bad "found ${FOUND}, refused ${REFUSED}, unasked ${UNASKED}"
 case "$OUT" in "NOT ASKED: the portal names no DHCP server, so none is asked."*) ok "the first line is the reason the report stores" ;; *) bad "printed: $OUT" ;; esac
 unset STEP_SERVERS STEP_REFUSAL
+
+# Queue item 8, WO-1021-N113 item 1: the authorized-server read step 4 kept
+# is handed to the DHCP read only by a binary that declares it reads it, and
+# only where step 4 kept one. The read is kept inside the run's private
+# directory, and with no such directory nothing is kept.
+export CAIRN_DHCP_SUBMIT=yes
+CCDIR="${work}/cc"
+mkdir -p "$CCDIR"
+keep_authorized_read 0 "dn: CN=DhcpRoot"
+[ "$AUTHORIZED_DIR" = "${CCDIR}/authorized" ] && [ "$(cat "${AUTHORIZED_DIR}/authorized.status")" = "0" ] && [ -s "${AUTHORIZED_DIR}/authorized.ldif" ] \
+  && ok "step 4's read is kept in the run's private directory, with its status" || bad "kept at ${AUTHORIZED_DIR}"
+BINARY_SPEAKS="abilities: error-source dhcp-authorizations"
+run_step
+[ "$(head -n 1 "$calls")" = "-portal https://portal.example -authorized-dir ${CCDIR}/authorized -collect-dhcp -server dhcp01.lab.example" ] \
+  && ok "a binary that declares it is handed the authorized-server read" || bad "called: $(cat "$calls")"
+BINARY_SPEAKS="abilities: error-source"
+run_step
+[ "$(head -n 1 "$calls")" = "-portal https://portal.example -collect-dhcp -server dhcp01.lab.example" ] \
+  && ok "a binary that does not declare it is not handed a flag it would refuse" || bad "called: $(cat "$calls")"
+AUTHORIZED_DIR=""
+BINARY_SPEAKS="abilities: error-source dhcp-authorizations"
+run_step
+[ "$(head -n 1 "$calls")" = "-portal https://portal.example -collect-dhcp -server dhcp01.lab.example" ] \
+  && ok "where step 4 kept nothing, nothing is handed over" || bad "called: $(cat "$calls")"
+CCDIR=""
+keep_authorized_read 0 "dn: CN=DhcpRoot"
+[ -z "$AUTHORIZED_DIR" ] && ok "with no private directory, nothing is kept" || bad "kept at ${AUTHORIZED_DIR}"
+BINARY_SPEAKS=""
+unset CCDIR
 
 # Submitting, and no portal named.
 CAIRN_PORTAL=""

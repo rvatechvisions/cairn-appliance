@@ -22,10 +22,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
-	dhcpsrv "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v1"
+	dhcpsrv"github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv/v1"
 	dhcpsrv2 "github.com/oiweiwei/go-msrpc/msrpc/dhcpm/dhcpsrv2/v1"
 )
 
@@ -220,6 +221,20 @@ func checkOf(id string, count int) coverageCheck {
 // buildSubmission is the whole of what leaves, assembled in one place so a
 // test can read it byte for byte. One part of one: this reader does not page.
 func buildSubmission(items []DerivedItem, coverage scopeCoverage, collectedAt time.Time, host, account, submissionID string) ([]byte, error) {
+	return buildSubmissionWith(items, coverage, nil, collectedAt, host, account, submissionID)
+}
+
+// buildSubmissionWith adds the two DHCP authorization findings, where the shell
+// handed over the directory read they are built from. Queue item 8.
+func buildSubmissionWith(items []DerivedItem, coverage scopeCoverage, authorizations []adCheck, collectedAt time.Time, host, account, submissionID string) ([]byte, error) {
+	findings := []any{
+		checkOf("dhcp-scopes-attempted", coverage.Attempted),
+		checkOf("dhcp-scopes-unreadable", coverage.Unreadable),
+		checkOf("dhcp-scopes-empty", coverage.Empty),
+	}
+	for _, check := range authorizations {
+		findings = append(findings, check)
+	}
 	body := map[string]any{
 		"envelope": map[string]any{
 			"schemaVersion": 1,
@@ -236,11 +251,7 @@ func buildSubmission(items []DerivedItem, coverage scopeCoverage, collectedAt ti
 			"pages":         1,
 			"totalDeclared": len(items),
 		},
-		"findings": []coverageCheck{
-			checkOf("dhcp-scopes-attempted", coverage.Attempted),
-			checkOf("dhcp-scopes-unreadable", coverage.Unreadable),
-			checkOf("dhcp-scopes-empty", coverage.Empty),
-		},
+		"findings": findings,
 		"items": items,
 	}
 	return json.Marshal(body)
@@ -274,7 +285,7 @@ func readAllLeases(ctx context.Context, servers dhcpsrv.DHCPServerClient, client
 }
 
 // collectDHCP is the -collect-dhcp mode: bind, read, reduce, sign, send.
-func collectDHCP(ctx context.Context, server, transport, targetName string, debug bool, portal, fingerprint string, private ed25519.PrivateKey) error {
+func collectDHCP(ctx context.Context, server, transport, targetName string, debug bool, portal, fingerprint string, private ed25519.PrivateKey, authorizedDir string) error {
 	servers, clients, closer, ctx, err := bindDHCP(ctx, server, transport, targetName, debug)
 	if err != nil {
 		return err
@@ -320,7 +331,14 @@ func collectDHCP(ctx context.Context, server, transport, targetName string, debu
 		return fmt.Errorf("minting a submission id: %w", err)
 	}
 	host, _ := os.Hostname()
-	body, err := buildSubmission(items, coverage, collectedAt, host, os.Getenv("CAIRN_PRINCIPAL"), hex.EncodeToString(id))
+	var authorizations []adCheck
+	if authorizedDir != "" {
+		authorizations = authorizationChecks(ctx, readAdDir(authorizedDir, "authorized"), true, net.DefaultResolver, ownAddresses())
+		for _, check := range authorizations {
+			fmt.Printf("authorizations: %s %s, %d\n", check.ID, check.State, check.Count)
+		}
+	}
+	body, err := buildSubmissionWith(items, coverage, authorizations, collectedAt, host, os.Getenv("CAIRN_PRINCIPAL"), hex.EncodeToString(id))
 	if err != nil {
 		return err
 	}

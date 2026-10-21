@@ -146,7 +146,10 @@ var relayedHeaders = []string{"username", "realm", "controller", "capabilities",
 //   - sysvol-read: -collect-ad takes -sysvol-host and reads two Group Policy
 //     setting values from SYSVOL, where SYSVOL is granted (sysvol.go).
 //     WO-1017-N54 item 3.
-var declaredAbilities = []string{"error-source", "signed-release", "sessions-left-open", "sysvol-read"}
+//   - dhcp-authorizations: -collect-dhcp takes -authorized-dir and sends the
+//     two DHCP authorization findings built from it (authorizations.go).
+//     Queue item 8, WO-1021-N113 item 1.
+var declaredAbilities = []string{"error-source", "signed-release", "sessions-left-open", "sysvol-read", "dhcp-authorizations"}
 
 // speaks is the -speaks answer: the credential-block lines this binary relays,
 // then what else it declares.
@@ -391,6 +394,7 @@ func main() {
 		"read the systems the Configuration Manager site the portal names has discovered, and submit five fields per system, signed")
 	collectAdChecks := flag.Bool("collect-ad", false,
 		"turn the directory reads the shell wrote to -ldif-dir into the Active Directory checks, and submit them, signed")
+	authorizedDir := flag.String("authorized-dir", "", "for -collect-dhcp: the directory the shell wrote the authorized DHCP server read into, as authorized.ldif, .status and .said")
 	ldifDir := flag.String("ldif-dir", "", "for -collect-ad: the directory the shell wrote each LDAP read, its exit status and its words into")
 	baseDN := flag.String("base-dn", "", "for -collect-ad: the domain's naming context, such as DC=example,DC=com")
 	collectedAtFlag := flag.String("collected-at", "", "for -collect-ad: when the shell began the reads, RFC 3339; absent means now")
@@ -569,7 +573,7 @@ func main() {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 			defer cancel()
-			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private); err != nil {
+			if err := collectDHCP(ctx, *server, *transport, *target, *debug, *portalURL, bound, private, *authorizedDir); err != nil {
 				fmt.Fprintln(os.Stderr, "preflight:", err)
 				os.Exit(failureExit(err))
 			}

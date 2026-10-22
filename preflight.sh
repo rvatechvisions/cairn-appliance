@@ -99,6 +99,31 @@ fi
 # before**, and says so. That is every box until its binary carries slice 6, so
 # the entry changes nothing on a box that has not been given it.
 RELEASE_STAGE_AT_END=0
+# A release brings the box's systemd units as well as its scripts. WO-1022-N122
+# item 5, on Jackie's answer of 22 October 2026 to card 1219722441221156
+# (option A, the builder builds it). Taking a release replaced the scripts and
+# the binary and never the installed unit, so a box could not learn its run
+# window or zone from a release. Each unit the current release carries under
+# systemd/ is installed where the box's copy differs, and systemd is told to
+# reload; a unit the release does not carry is left as it is. It takes effect
+# from the next run, because this run started under the unit it had.
+# CAIRN_SYSTEMD_DIR and CAIRN_SYSTEMCTL exist for release-units-test.sh.
+release_units() {
+  local dir="$1" units="${CAIRN_SYSTEMD_DIR:-/etc/systemd/system}" name changed=0
+  for name in cairn-preflight.service cairn-preflight.timer; do
+    [ -f "${dir}/systemd/${name}" ] || continue
+    cmp -s "${dir}/systemd/${name}" "${units}/${name}" && continue
+    if install -m 644 "${dir}/systemd/${name}" "${units}/${name}"; then
+      say "release: installed ${name} from the current release; it takes effect from the next run"
+      changed=1
+    else
+      say "release: could not install ${name} from the current release; the box keeps the unit it has"
+    fi
+  done
+  if [ "$changed" = 1 ]; then
+    "${CAIRN_SYSTEMCTL:-systemctl}" daemon-reload || say "release: systemctl daemon-reload did not finish; the new unit is read at the next reload"
+  fi
+}
 release_entry() {
   local binary="${HERE}/preflight/preflight" listed dir commit marker status=0
   [ -z "${CAIRN_IN_RELEASE:-}" ] || return 0
@@ -118,6 +143,7 @@ release_entry() {
     RELEASE_STAGE_AT_END=1
     return 0
   fi
+  release_units "$dir"
   marker="$(mktemp)"
   rm -f "$marker"
   CAIRN_IN_RELEASE=1 CAIRN_RELEASE_COMMIT="$commit" CAIRN_RUN_COMPLETED_FILE="$marker" bash "${dir}/preflight.sh" "$@" || status=$?

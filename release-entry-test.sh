@@ -86,6 +86,11 @@ enter() {
     CONFIG_DIR="${work}/box/config"
     CAIRN_PORTAL="https://portal.example"
     RELEASE_STAGE_AT_END=0
+    # release_entry calls release_units once a release is current (WO-1022-N122
+    # item 5); release-units-test.sh holds what it does, and here it points at a
+    # directory of the sandbox so no run reaches the host's units.
+    CAIRN_SYSTEMD_DIR="${work}/box/units"
+    eval "$(lift release_units)"
     eval "$(lift release_entry)"
     release_entry
     printf 'returned stage_at_end=%s\n' "$RELEASE_STAGE_AT_END"

@@ -116,5 +116,18 @@ else
   bad "release_entry installs the units once a release is current, before running it"
 fi
 
+# 6. A run inside a release installs the units its own release carries.
+# WO-1023-N125 item 5: the entry file on a box already on releases is never
+# replaced, so on RVA's box it is release 2's and has no release_units. The
+# release's own preflight.sh, run with CAIRN_IN_RELEASE set, has to do it.
+inside="$(printf '%s\n' "$entry" | grep -n 'release_units "\$HERE"' | cut -d: -f1)"
+leaves="$(printf '%s\n' "$entry" | grep -n 'return 0' | head -n 1 | cut -d: -f1)"
+guard="$(printf '%s\n' "$entry" | grep -n 'if \[ -n "\${CAIRN_IN_RELEASE:-}" \]; then' | cut -d: -f1)"
+if [ -n "$inside" ] && [ -n "$leaves" ] && [ -n "$guard" ] && [ "$guard" -lt "$inside" ] && [ "$inside" -lt "$leaves" ]; then
+  ok "a run inside a release installs its own release's units before it leaves release_entry"
+else
+  bad "a run inside a release installs its own release's units before it leaves release_entry"
+fi
+
 printf '%d of %d checks passed\n' "$((checks - fails))" "$checks"
 [ "$fails" -eq 0 ]

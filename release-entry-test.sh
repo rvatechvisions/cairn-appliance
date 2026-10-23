@@ -140,5 +140,19 @@ said="$(CAIRN_IN_RELEASE=1 BOX_CURRENT="${work}/box/release" enter)"
 case "$said" in *"returned stage_at_end=0"*) ok "a run inside a release does not enter again" ;; *) bad "a run inside a release gave: ${said}" ;; esac
 [ ! -s "${work}/box/log" ] && ok "and asks its binary nothing" || bad "inside a release the binary was asked: $(cat "${work}/box/log")"
 
+# Inside a release that carries a unit: it is installed from that release.
+# WO-1023-N125 item 5: the box's own entry file may be one with no release_units.
+setup
+mkdir -p "${work}/box/systemd" "${work}/box/units"
+printf 'release 4 service\n' >"${work}/box/systemd/cairn-preflight.service"
+printf 'release 2 service\n' >"${work}/box/units/cairn-preflight.service"
+said="$(CAIRN_IN_RELEASE=1 CAIRN_SYSTEMCTL=true BOX_CURRENT="${work}/box/release" enter)"
+if cmp -s "${work}/box/systemd/cairn-preflight.service" "${work}/box/units/cairn-preflight.service"; then
+  ok "a run inside a release installs the unit its release carries"
+else
+  bad "a run inside a release left the box's unit as it was: ${said}"
+fi
+case "$said" in *"installed cairn-preflight.service from the current release"*"returned stage_at_end=0"*) ok "and says so, and enters nothing" ;; *) bad "inside a release with a unit gave: ${said}" ;; esac
+
 printf '%s checks, %s failed\n' "$checks" "$fails"
 [ "$fails" -eq 0 ]

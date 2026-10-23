@@ -126,7 +126,15 @@ release_units() {
 }
 release_entry() {
   local binary="${HERE}/preflight/preflight" listed dir commit marker status=0
-  [ -z "${CAIRN_IN_RELEASE:-}" ] || return 0
+  # Inside a release, this file IS the release's, so it installs the units its
+  # own release carries. WO-1023-N125 item 5: a box's entry file is never
+  # replaced by a release, so on RVA's box it is release 2's, which has no
+  # release_units, and the call below never runs there. Without this a release
+  # could not bring its units to any box already on releases.
+  if [ -n "${CAIRN_IN_RELEASE:-}" ]; then
+    release_units "$HERE"
+    return 0
+  fi
   if [ -z "${CAIRN_PORTAL:-}" ] || [ ! -f "${CONFIG_DIR}/appliance.key" ] || [ ! -x "$binary" ]; then
     return 0
   fi

@@ -1086,7 +1086,7 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	// the two can never both appear: either a shape was observed or it was not.
 	if len(uids) > 0 {
 		fmt.Println("")
-		fmt.Println("CLIENTUID LENGTH HISTOGRAM, over the leases read above:")
+		fmt.Println("ClientUID LENGTH HISTOGRAM, over the leases read above:")
 		for _, line := range uidHistogramLines(uids) {
 			fmt.Println(line)
 		}

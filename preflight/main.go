@@ -1004,6 +1004,11 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	// ordinary, and every scope being empty is what leaves the parse unproven.
 	observed := 0
 
+	// The histogram this probe exists to capture. WO-1030-N137 item 6: the
+	// paragraph below has promised it since September and nothing computed it,
+	// so a run that did see a lease would have printed a count and no shape.
+	uids := map[int]uidTally{}
+
 	fmt.Printf("reading leases from %d of %d scope(s), as a sample:\n", read, len(addresses))
 	for _, address := range addresses[:read] {
 		leases, err := clients.EnumSubnetClientsV5(ctx, &dhcpsrv2.EnumSubnetClientsV5Request{
@@ -1037,6 +1042,16 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 		count := 0
 		if leases.ClientInfo != nil {
 			count = len(leases.ClientInfo.Clients)
+			for _, client := range leases.ClientInfo.Clients {
+				if client == nil {
+					continue
+				}
+				var uid []byte
+				if client.ClientHardwareAddress != nil {
+					uid = client.ClientHardwareAddress.Data
+				}
+				tallyUID(uids, uid, client.ClientIPAddress, client.SubnetMask)
+			}
 		}
 		if leases.Return == dhcpErrorMoreData {
 			fmt.Printf("  %-18s %d lease(s) on the first page, and the server says there are more\n", formatIPv4(address), count)
@@ -1067,6 +1082,19 @@ func run(ctx context.Context, server string, scopeLimit int, transport, targetNa
 	//
 	// So a run that enumerated scopes and saw no clients says so in those
 	// words rather than reading as a clean bill of health.
+	// The reading, where there is one. Printed before the paragraph below so
+	// the two can never both appear: either a shape was observed or it was not.
+	if len(uids) > 0 {
+		fmt.Println("")
+		fmt.Println("CLIENTUID LENGTH HISTOGRAM, over the leases read above:")
+		for _, line := range uidHistogramLines(uids) {
+			fmt.Println(line)
+		}
+		fmt.Println("  This is the field every device key in the portal is built on. A length")
+		fmt.Println("  that arrives and is REFUSED is a lease the portal will never key, and")
+		fmt.Println("  it is the shape worth sending back to whoever builds this reader.")
+	}
+
 	if observed == 0 {
 		fmt.Println("")
 		fmt.Println("SUBNETS ENUMERATED, CLIENTS NOT YET OBSERVED.")

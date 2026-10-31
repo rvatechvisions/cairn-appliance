@@ -51,6 +51,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -81,6 +82,86 @@ func hardwareAddress(uid []byte, ip, mask uint32) (string, bool) {
 		return formatMAC(uid[5:]), true
 	}
 	return "", false
+}
+
+// The ClientUID length histogram, which is the whole reason the lease probe
+// exists. WO-1030-N137, 00-i item 6.
+//
+// ## It was promised and never computed
+//
+// When no lease came back, the probe said "the ClientUID length histogram is
+// still unrecorded", which reads as *it would be recorded if one did*. Nothing
+// recorded it. A device could have taken a lease on that scope at any point in
+// the six weeks since and the run would have printed a lease count and no
+// histogram — so the reading the backlog entry asks the next run to capture
+// was not something any run could have produced. *Before trusting a figure,
+// check something writes it.*
+//
+// ## Why the length alone is not the answer
+//
+// The question is not which lengths a server sends; it is whether what it
+// sends parses to a hardware address. A length counted without that says the
+// shape and not the outcome, and the outcome is what every device key rests
+// on. So each length carries how many parsed and how many were refused: a
+// length that arrives and never parses is the failure this probe is for, and
+// it looks identical to a length that arrives and always parses if only the
+// lengths are counted.
+type uidTally struct {
+	Keyed   int
+	Refused int
+}
+
+// uidShape names what a ClientUID of this length is, in the specification's
+// terms, so somebody reading the output does not have to hold MS-DHCPM's three
+// documented shapes in their head. A length outside them says so rather than
+// being given a name it has not earned.
+func uidShape(length int) string {
+	switch length {
+	case 0:
+		return "no ClientUID at all"
+	case 6:
+		return "a bare hardware address"
+	case 7:
+		return "a client-identifier of type 1"
+	case 11:
+		return "a client unique id with a subnet prefix"
+	default:
+		return "a length none of the three documented shapes covers"
+	}
+}
+
+// tallyUID adds one observation, keyed or refused, to the histogram.
+func tallyUID(tally map[int]uidTally, uid []byte, ip, mask uint32) {
+	at := tally[len(uid)]
+	if _, ok := hardwareAddress(uid, ip, mask); ok {
+		at.Keyed++
+	} else {
+		at.Refused++
+	}
+	tally[len(uid)] = at
+}
+
+// uidHistogramLines renders the tally shortest length first, one line each,
+// with the counts beside the shape. Empty where nothing was observed: the
+// caller says so in its own words, because *a check that answered nothing and
+// a check that could not run must not print the same thing*.
+func uidHistogramLines(tally map[int]uidTally) []string {
+	lengths := make([]int, 0, len(tally))
+	for length := range tally {
+		lengths = append(lengths, length)
+	}
+	sort.Ints(lengths)
+
+	lines := make([]string, 0, len(lengths))
+	for _, length := range lengths {
+		at := tally[length]
+		line := fmt.Sprintf("  %2d bytes: %d parsed", length, at.Keyed)
+		if at.Refused > 0 {
+			line += fmt.Sprintf(", %d REFUSED", at.Refused)
+		}
+		lines = append(lines, line+" — "+uidShape(length))
+	}
+	return lines
 }
 
 func formatMAC(b []byte) string {

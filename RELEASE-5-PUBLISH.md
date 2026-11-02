@@ -1,9 +1,46 @@
 # Release 5: publish steps
 
-Staged by WO-1031-N138 item 4 on 31 October 2026. **Not before 4 November
+Staged by WO-1031-N138 item 4 on 31 October 2026. ~~**Not before 4 November
 2026**, and that date is the whole reason this is a staged document rather than
-a published release — see the next section. Every step runs from the build
+a published release — see the next section.~~ Every step runs from the build
 machine, in `C:\dev\portal`, by the builder. Nothing here is Jackie's.
+
+> **THE HOLD IS LIFTED, AND THE DATE NO LONGER GATES ANYTHING.** The order
+> author ruled on 2 November 2026, WO-1031-N139 section 00 (2 November) item
+> 00-A, that **the batching rule counts only releases that ask Jackie for a
+> signature**. A release published unsigned under his waiver of 19 October 2026
+> asks him for nothing, so the rule's purpose is not reached and release 5 may
+> go when it is ready. Recorded in CLAUDE.md beside the batching rule as the
+> order author's ruling rather than Jackie's.
+>
+> **The section below is kept as written**, because it is the record of why the
+> release waited and of the contradiction being reported rather than resolved —
+> and because this document itself said *if the order author wants release 5
+> sooner, that is one line from them*. That line was given.
+>
+> **The four gates ran on 2 November 2026 and all four pass:**
+>
+> | Gate | Result |
+> | --- | --- |
+> | 1. Date and window | **Outside.** The box's own declaration, 05:00 for 75 minutes in `America/New_York`, asked through the deploy's `--check-window` at 15:41 UTC. Nobody has said they are at the box. The 4 November clause is superseded by the ruling above |
+> | 2. Appliance count | **One.** `3131a26a`, enrolled 2026-09-22T12:28:00.542Z, so release 5 goes unsigned under the 19 October waiver |
+> | 3. The kept files | **Match.** Binary `007e1669a34c83cd765de6f9cfe31b67fa6c0065c2ec89cd29cfff89b64f49ee`, 19,980,987 bytes; manifest `8a32e11c191d9efd26e921e54b35640f3e47488c02933fe0d8f87aeed4c60b9e` |
+> | 4. The actor | **`44cac03d-b2c8-4b9a-a9b5-b3909e8af5b2`**, read from `appliance_releases.published_by` for sequence 4 — a typed column rather than the audit row's JSON, which is a narrower read and a stated deviation from step 4 below |
+>
+> **And one thing no step here checked: sequence 4 is the newest row**, so
+> release 5 is the next and publishes nothing over a newer one. It was added to
+> the gate read because a sequence going backwards is the sort of thing a
+> document of steps does not notice.
+>
+> Read by `deploy/reads/n139-release-5-gates.ts` at 15:45 UTC on 2 November
+> 2026, capture `2026-11-02T15-45-14-npx-3480.out`, sha256
+> `6433f8fbc72aff94432e1741b139e78442befa2bdbd282695d097024ebd2d3cc`.
+>
+> **A loose end the same read closed:** release 4's binary is `493b8f9b0512`,
+> which is the binary RVA's box reported on all three runs either side of the
+> daylight change. **The box is on release 4**, not release 2 as this project's
+> narrative last named it — release 2 is `8a36d1480f63`, release 3
+> `8db342bf1ec0`.
 
 ## Why it is staged and not published
 
@@ -139,6 +176,36 @@ Each command rehearses first, then runs with `--apply`, as release 4's did.
    then again with `--apply`. Read back release 5 as the newest row of
    `appliance_releases`, unsigned.
 8. **The release row** in the portal repository's `APPLIANCE-BINARY-QUEUE.md`.
+
+> **STEPS 5 TO 8 ARE DONE. Release 5 is published and recorded, 2 November
+> 2026.** Steps 9 to 12 below are the box's own runs and are not yet read.
+>
+> | Step | What was read |
+> | --- | --- |
+> | 5. Publish the binary | `PUBLISHED` at about 18:32 UTC: 132 parts joined, binary `007e1669a34c83cd765de6f9cfe31b67fa6c0065c2ec89cd29cfff89b64f49ee`, 19,980,987 bytes, stamped `614a2cf6963e0fd2c32d88caf27f2808129e5a33`. **Every one of the 132 parts placed on its first attempt.** Capture `2026-11-02T18-32-35-npx-15784.out`, sha256 `07185abfe8decc1971592c345f5919a0eae8b0a031ce258596298e96d7b5dcd5` |
+> | 6. Hold the five files | **All five answered *already held***, each at the digest and size the manifest lists. Rehearsed first, and every one decoded on the host to exactly its manifest digest, so the bytes travelled intact. Captures `2026-11-02T18-36-48-hold-rehearse-8440.out`, sha256 `d7bc351a4304cb3e218ff95283cfba5483766156d098f74c43878014e7add571`, and `2026-11-02T18-40-04-hold-apply-2004.out`, sha256 `be2c5340fa0932f51720a4eff21e0f14217eb5de637cec143ea7a292544427cf` |
+> | 7. Record | `RECORDED: unsigned release 5, naming binary 007e1669…`. Capture `2026-11-02T18-44-46-record-apply-13828.out`, sha256 `6a3cf5c2aa2f0a91b95b69ab55384781c792b7b22f02c5119f8ef9d1792c3094`. Read back: sequence 5 is the newest row, unsigned, its `published_at` 2026-11-02T18:44:59.037Z, with one live binding — capture `2026-11-02T18-45-45-release-5-recorded-12988.out`, sha256 `923e7c40fcb533367d3b9d4233cb1d87f0303ca4d156f26962e7017c945f075a` |
+> | 8. The release row | Written in the portal repository |
+>
+> **One line in the read-back is not a fault**, said so nobody reads it as one:
+> `deploy/reads/n139-release-5-gates.ts` ends `STOP: the newest sequence is 5,
+> not 4`. That is its **pre-publish** gate — written to refuse a publish that
+> would put release 5 over a newer row — run **after** the publish, as the
+> read-back. It is the guard working, and it will say the same to every later
+> reader of that script.
+>
+> **The upload failed once and nothing was half-published.** An earlier attempt
+> placed 119 of the 132 parts and died on its own scratch directory under the
+> temp folder, which nothing it did removed. The publish step never ran, so the
+> portal's binary was unchanged until the re-run placed all 132;
+> `src/cli/upload-binary.ts` now keeps its parts under LOCALAPPDATA, as
+> `build.sh` and `run-suite.ts` already do.
+>
+> **The order names `a917f3b` and the release carries `614a2cf`, and both are
+> right.** `a917f3b` is the histogram itself, which is what WO-1031-N139 means
+> by it; `614a2cf` is the branch tip, one spelling fix above it, and is what the
+> manifest and the binary stamp name. Written down because a release named by
+> two commits is the sort of thing a later reader takes for a mismatch.
 
 ## Read back afterwards, run by run
 
